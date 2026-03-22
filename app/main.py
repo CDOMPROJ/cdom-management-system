@@ -20,7 +20,8 @@ from app.api.v1 import (
     finances,
     umutulo,
     certificates,
-    youth_ministry
+    youth_ministry,
+    communications
 )
 
 # ==========================================
@@ -77,6 +78,9 @@ app.include_router(certificates.router, prefix="/api/v1/print", tags=["7.0 Offic
 
 # SECTION 8: Pastoral Care & Formation
 app.include_router(youth_ministry.router, prefix="/api/v1/youth", tags=["8.0 Youth Ministry & Catechesis"])
+
+# SECTION 9: System Communications
+app.include_router(communications.router, prefix="/api/v1/communications", tags=["9.0 Email & Communications"])
 
 # ==========================================
 # 5. SYSTEM HEALTH CHECK

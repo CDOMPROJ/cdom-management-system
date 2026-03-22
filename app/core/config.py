@@ -14,9 +14,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = Field(default="HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=120)
 
-    # Email Config
-    MAIL_USERNAME: str = Field(default="")
-    MAIL_PASSWORD: str = Field(default="")
+    # Email Config (Resend)
+    RESEND_API_KEY: str = Field(default="")
 
     # Tells Pydantic to read from the .env file
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
