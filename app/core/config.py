@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     # Database Config
     DATABASE_URL: str
+    TEST_DATABASE_URL: str = Field(default="")
 
     # Security Config
     SECRET_KEY: str

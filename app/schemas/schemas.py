@@ -1,47 +1,24 @@
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, validator
+from typing import Optional, List, Generic, TypeVar
 from datetime import date, datetime
-from typing import Optional, List
 import uuid
 
-# Import the Enum directly from models to guarantee database synchronization
-from app.models.all_models import ReligionCategory
+# ==============================================================================
+# BASE GENERIC SCHEMAS
+# ==============================================================================
+T = TypeVar("T")
+
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    """Generic schema for returning paginated lists of data."""
+    total_count: int
+    limit: int
+    skip: int
+    data: List[T]
 
 
 # ==============================================================================
-# GOVERNANCE & APPROVALS
-# ==============================================================================
-class PendingActionCreate(BaseModel):
-    action_type: str = Field(..., examples=["UPDATE"])
-    target_table: str = Field(..., examples=["baptisms"])
-    target_record_id: str
-    proposed_payload: dict
-
-
-class PendingActionResponse(PendingActionCreate):
-    id: uuid.UUID
-    requested_by: str
-    status: str
-    reviewed_by: Optional[str] = None
-    created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class AuditLogResponse(BaseModel):
-    id: uuid.UUID
-    action_type: str = Field(..., description="CREATE, UPDATE, or DELETE")
-    target_table: str
-    target_record_id: str
-    changed_by_email: str
-    old_values: Optional[dict] = None
-    new_values: Optional[dict] = None
-    changed_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-# ==============================================================================
-# 1. SECURITY & IDENTITY (PUBLIC SCHEMA)
+# 1. AUTHENTICATION & USERS
 # ==============================================================================
 class Token(BaseModel):
     access_token: str
@@ -49,62 +26,51 @@ class Token(BaseModel):
 
 
 class TokenData(BaseModel):
-    email: Optional[str] = None
-    role: Optional[str] = None
+    username: Optional[str] = None
 
 
-class UserBase(BaseModel):
+class UserCreate(BaseModel):
     email: EmailStr
-    role: str = Field(..., description="E.g., Parish Secretary, Parish Priest, SysAdmin")
-    office: Optional[str] = None
+    password: str
+    first_name: str
+    last_name: str
+    role: str
     parish_id: Optional[int] = None
     deanery_id: Optional[int] = None
 
 
-class UserCreate(UserBase):
-    password: str
-
-
-class UserResponse(UserBase):
+class UserResponse(BaseModel):
     id: uuid.UUID
+    email: EmailStr
+    first_name: str
+    last_name: str
+    role: str
     is_active: bool
+    parish_id: Optional[int] = None
 
-    model_config = ConfigDict(from_attributes=True)
-
-
-# ==============================================================================
-# 2. PARISH & DEANERY (PUBLIC SCHEMA)
-# ==============================================================================
-class ParishBase(BaseModel):
-    name: str
-    deanery_id: int
-    schema_name: str
-
-
-class ParishResponse(ParishBase):
-    id: int
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True
 
 
 # ==============================================================================
-# 3. SACRAMENTAL REGISTERS (BRONZE LAYER)
+# 2. SACRAMENTAL REGISTERS
 # ==============================================================================
 
-# --- BAPTISMS ---
+# --- Baptisms ---
 class BaptismBase(BaseModel):
-    first_name: str = Field(..., examples=["Peter"])
-    middle_name: Optional[str] = None
-    last_name: str = Field(..., examples=["Mulenga"])
-    dob: date = Field(..., description="Required for statistical age bracketing")
+    first_name: str
+    last_name: str
+    dob: date
     date_of_baptism: date
-    minister_of_baptism: str
+    place_of_birth: str
     father_first_name: str
     father_last_name: str
     mother_first_name: str
     mother_last_name: str
     godparents: str
-    village: str
-    center: str
+    minister_of_baptism: str
+    village: Optional[str] = None
+    center: Optional[str] = None
 
 
 class BaptismCreate(BaptismBase):
@@ -113,26 +79,20 @@ class BaptismCreate(BaptismBase):
 
 class BaptismResponse(BaptismBase):
     id: uuid.UUID
-    formatted_number: str
-    registry_year: int
-    is_deceased: bool
-    model_config = ConfigDict(from_attributes=True)
+    canonical_number: str
+
+    class Config:
+        from_attributes = True
 
 
-# --- FIRST COMMUNIONS ---
+# --- First Communions ---
 class FirstCommunionBase(BaseModel):
     first_name: str
-    middle_name: Optional[str] = None
     last_name: str
-    father_first_name: str
-    father_last_name: str
-    mother_first_name: str
-    mother_last_name: str
     baptism_number: str
-    baptised_at: str
-    communion_date: date
+    date_of_communion: date
     minister: str
-    place_of_communion: str
+    place_of_baptism: str
 
 
 class FirstCommunionCreate(FirstCommunionBase):
@@ -141,29 +101,21 @@ class FirstCommunionCreate(FirstCommunionBase):
 
 class FirstCommunionResponse(FirstCommunionBase):
     id: uuid.UUID
-    formatted_number: str
-    registry_year: int
-    model_config = ConfigDict(from_attributes=True)
+    canonical_number: str
+
+    class Config:
+        from_attributes = True
 
 
-# --- CONFIRMATIONS ---
+# --- Confirmations ---
 class ConfirmationBase(BaseModel):
     first_name: str
-    middle_name: Optional[str] = None
     last_name: str
-    dob: date = Field(..., description="Required for statistical age bracketing (Adult vs Child)")
-    father_first_name: str
-    father_last_name: str
-    mother_first_name: str
-    mother_last_name: str
     baptism_number: str
-    baptised_at: str
-    confirmation_date: date
+    date_of_confirmation: date
+    sponsor_name: str
     minister: str
-    place_of_confirmation: str
-    god_parent: str
-    god_parent_is_baptised: bool
-    god_parent_is_confirmed: bool
+    place_of_baptism: str
 
 
 class ConfirmationCreate(ConfirmationBase):
@@ -172,49 +124,25 @@ class ConfirmationCreate(ConfirmationBase):
 
 class ConfirmationResponse(ConfirmationBase):
     id: uuid.UUID
-    formatted_number: str
-    registry_year: int
-    model_config = ConfigDict(from_attributes=True)
+    canonical_number: str
+
+    class Config:
+        from_attributes = True
 
 
-# --- MARRIAGES (CANON LAW ENFORCED) ---
+# --- Marriages ---
 class MarriageBase(BaseModel):
-    # Groom Details
-    groom_first_name: str = Field(..., examples=["John"])
-    groom_middle_name: Optional[str] = None
-    groom_last_name: str = Field(..., examples=["Mulenga"])
-    groom_father_first_name: str
-    groom_father_last_name: str
-    groom_mother_first_name: str
-    groom_mother_last_name: str
-    groom_dob: date
-    groom_baptised_at: str
-    groom_baptism_number: str
-    groom_religion_category: ReligionCategory = Field(default=ReligionCategory.CATHOLIC)
-    groom_religion_specific: Optional[str] = Field(None, examples=["UCZ"])
-
-    # Bride Details
-    bride_first_name: str = Field(..., examples=["Mary"])
-    bride_middle_name: Optional[str] = None
-    bride_last_name: str = Field(..., examples=["Bwalya"])
-    bride_father_first_name: str
-    bride_father_last_name: str
-    bride_mother_first_name: str
-    bride_mother_last_name: str
-    bride_dob: date
-    bride_baptised_at: str
-    bride_baptism_number: str
-    bride_religion_category: ReligionCategory = Field(default=ReligionCategory.CATHOLIC)
-    bride_religion_specific: Optional[str] = Field(None, examples=["SDA"])
-
-    # Event Details
-    marriage_date: date
-    place_of_marriage: str
-    minister: str
+    husband_first_name: str
+    husband_last_name: str
+    husband_baptism_number: str
+    wife_first_name: str
+    wife_last_name: str
+    wife_baptism_number: str
+    date_of_marriage: date
     witness_1: str
     witness_2: str
-    banns_published_on: Optional[date] = None
-    dispensation_from_impediment: Optional[str] = None
+    minister: str
+    notes: Optional[str] = None
 
 
 class MarriageCreate(MarriageBase):
@@ -223,22 +151,24 @@ class MarriageCreate(MarriageBase):
 
 class MarriageResponse(MarriageBase):
     id: uuid.UUID
-    formatted_number: str
-    registry_year: int
-    model_config = ConfigDict(from_attributes=True)
+    canonical_number: str
+
+    class Config:
+        from_attributes = True
 
 
-# --- DEATH REGISTER ---
+# --- Death Register ---
 class DeathRegisterBase(BaseModel):
     first_name: str
-    middle_name: Optional[str] = None
     last_name: str
-    baptism_number: Optional[str] = None
     date_of_death: date
     date_of_burial: date
     place_of_burial: str
-    minister_of_rites: str
-    received_last_rites: bool = False
+    cause_of_death: Optional[str] = None
+    sacraments_received: Optional[str] = None
+    minister: str
+    baptism_number: Optional[str] = None
+    next_of_kin: str
 
 
 class DeathRegisterCreate(DeathRegisterBase):
@@ -248,128 +178,63 @@ class DeathRegisterCreate(DeathRegisterBase):
 class DeathRegisterResponse(DeathRegisterBase):
     id: uuid.UUID
     formatted_number: str
-    registry_year: int
-    model_config = ConfigDict(from_attributes=True)
+
+    class Config:
+        from_attributes = True
 
 
 # ==============================================================================
-# 4. GOLD LAYER (BISHOP'S DASHBOARD & CENSUS)
-# ==============================================================================
-class AnnualParishCensusBase(BaseModel):
-    """Payload for submitting the Annual Statistics report data."""
-    reporting_year: int
-    catechumens_count: int = Field(0, ge=0)
-    converts_without_conditional_baptism: int = Field(0, ge=0)
-    paid_catechists: int = Field(0, ge=0)
-    voluntary_catechists: int = Field(0, ge=0)
-    total_catholic_population: int = Field(0, ge=0)
-    other_christians: int = Field(0, ge=0)
-    non_christians: int = Field(0, ge=0)
-
-
-class AnnualParishCensusCreate(AnnualParishCensusBase):
-    parish_id: int  # Often injected by the router via JWT, but required for the DB
-
-
-class AnnualParishCensusResponse(AnnualParishCensusBase):
-    id: int
-    parish_id: int
-    model_config = ConfigDict(from_attributes=True)
-
-
-# ==============================================================================
-# 5. GLOBAL SEARCH RESULTS
-# ==============================================================================
-class GlobalSearchResult(BaseModel):
-    name: str
-    canonical: str
-    parish: str
-    type: str
-
-
-class SearchResponse(BaseModel):
-    scope: str
-    message: str
-    results: List[GlobalSearchResult]
-
-
-from decimal import Decimal
-
-# ==============================================================================
-# 6. FINANCIAL LEDGERS (PARISH SCHEMA)
-# ==============================================================================
-class FinanceBase(BaseModel):
-    transaction_date: date
-    transaction_type: str
-    category: str
-    amount: Decimal
-    notes: Optional[str] = None
-
-class FinanceCreate(FinanceBase):
-    pass
-
-class FinanceResponse(FinanceBase):
-    id: uuid.UUID
-    row_number: int
-    model_config = ConfigDict(from_attributes=True)
-
-
-class DiocesanContributionBase(BaseModel):
-    reporting_year: int
-    fund_name: str
-    target_amount: Optional[Decimal] = None
-    actual_amount: Decimal = Field(default=0.00)
-    variance_amount: Optional[Decimal] = None
-    notes: Optional[str] = None
-
-class DiocesanContributionCreate(DiocesanContributionBase):
-    pass
-
-class DiocesanContributionResponse(DiocesanContributionBase):
-    id: uuid.UUID
-    row_number: int
-    model_config = ConfigDict(from_attributes=True)
-
-
-# ==============================================================================
-# 7. YOUTH MINISTRY & CATECHESIS (PARISH SCHEMA)
+# 3. YOUTH MINISTRY
 # ==============================================================================
 class YouthProfileBase(BaseModel):
     first_name: str
     last_name: str
     dob: date
-    parent_guardian_name: str
-    contact_number: Optional[str] = None
-    village_center: str
+    gender: str
+    village: str
+    center: str
     is_baptised: bool = False
     is_communicant: bool = False
-    is_confirmed: bool = False
-    canonical_baptism_number: Optional[str] = None
+
 
 class YouthProfileCreate(YouthProfileBase):
     pass
 
+
 class YouthProfileResponse(YouthProfileBase):
     id: uuid.UUID
-    created_at: datetime
-    model_config = ConfigDict(from_attributes=True)
+
+    class Config:
+        from_attributes = True
 
 
 class YouthActionPlanBase(BaseModel):
-    academic_year: int
+    academic_year: str
     title: str
-    objectives: str
     target_demographic: str
-    proposed_budget: Decimal = Field(default=0.00)
-    status: str = "DRAFT"
-    pp_feedback: Optional[str] = None
+    proposed_budget: float
+    objectives: str
+
 
 class YouthActionPlanCreate(YouthActionPlanBase):
     pass
 
+
 class YouthActionPlanResponse(YouthActionPlanBase):
     id: uuid.UUID
+    status: str
     created_by: str
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-    model_config = ConfigDict(from_attributes=True)
+    pp_feedback: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ==============================================================================
+# 4. FINANCES & UMUTULO
+# ==============================================================================
+class DiocesanContributionCreate(BaseModel):
+    fund_name: str
+    target_amount: Optional[float] = None
+    actual_amount: float
+    notes: Optional[str] = None

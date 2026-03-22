@@ -1,21 +1,39 @@
 import io
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, text
+from sqlalchemy import select, func, text
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 
 from app.core.dependencies import get_db, require_youth_chaplain, require_parish_priest, require_read_access
 from app.models.all_models import YouthProfileModel, YouthActionPlanModel, ParishModel
-from app.schemas.schemas import YouthProfileCreate, YouthProfileResponse, YouthActionPlanCreate, YouthActionPlanResponse
+from app.schemas.schemas import YouthProfileCreate, YouthProfileResponse, YouthActionPlanCreate, \
+    YouthActionPlanResponse, PaginatedResponse
 
 router = APIRouter()
 
 
 # ==============================================================================
-# 1. YOUTH DEMOGRAPHICS & CATECHUMEN TRACKING
+# HELPER: TENANT ROUTING
+# ==============================================================================
+async def set_parish_schema(db: AsyncSession, parish_id: int):
+    """Securely locks the database context to the specific Parish's schema."""
+    if not parish_id:
+        raise HTTPException(status_code=403, detail="User is not assigned to a valid parish.")
+
+    parish_query = await db.execute(select(ParishModel.schema_name).where(ParishModel.id == parish_id))
+    schema_name = parish_query.scalar_one_or_none()
+
+    if not schema_name:
+        raise HTTPException(status_code=404, detail="Parish schema not found.")
+
+    await db.execute(text(f'SET search_path TO "{schema_name}"'))
+
+
+# ==============================================================================
+# 1. YOUTH DEMOGRAPHICS & CATECHUMEN TRACKING (WITH PAGINATION)
 # ==============================================================================
 @router.post("/profiles", response_model=YouthProfileResponse, status_code=status.HTTP_201_CREATED)
 async def register_youth(
@@ -24,6 +42,9 @@ async def register_youth(
         _current_user: dict = Depends(require_youth_chaplain)
 ):
     """Registers a child/youth into the parish system to track their sacramental journey."""
+    # A. TENANT ROUTING: Ensure data goes to the parish vault, not the public global schema
+    await set_parish_schema(db, _current_user.get("parish_id"))
+
     new_profile = YouthProfileModel(**profile_in.model_dump())
     db.add(new_profile)
     await db.commit()
@@ -31,21 +52,69 @@ async def register_youth(
     return new_profile
 
 
-@router.get("/catechumens/pending-baptism", response_model=list[YouthProfileResponse])
-async def get_unbaptised_youth(db: AsyncSession = Depends(get_db),
-                               _current_user: dict = Depends(require_youth_chaplain)):
-    """Returns a list of all children/youth registered who have NOT received Baptism."""
-    query = await db.execute(select(YouthProfileModel).where(YouthProfileModel.is_baptised == False))
-    return query.scalars().all()
+@router.get("/catechumens/pending-baptism", response_model=PaginatedResponse[YouthProfileResponse])
+async def get_unbaptised_youth(
+        skip: int = Query(0, ge=0, description="Number of records to skip"),
+        limit: int = Query(20, ge=1, le=100, description="Max records to return per page"),
+        db: AsyncSession = Depends(get_db),
+        _current_user: dict = Depends(require_youth_chaplain)
+):
+    """Returns a paginated list of all children/youth registered who have NOT received Baptism."""
+    await set_parish_schema(db, _current_user.get("parish_id"))
+
+    # 1. Get the total mathematical count for the frontend to calculate total pages
+    count_query = await db.execute(
+        select(func.count(YouthProfileModel.id)).where(YouthProfileModel.is_baptised == False)
+    )
+    total_count = count_query.scalar() or 0
+
+    # 2. Fetch the specific slice of data requested by the mobile app
+    query = await db.execute(
+        select(YouthProfileModel)
+        .where(YouthProfileModel.is_baptised == False)
+        .offset(skip)
+        .limit(limit)
+    )
+    records = query.scalars().all()
+
+    return {
+        "total_count": total_count,
+        "limit": limit,
+        "skip": skip,
+        "data": records
+    }
 
 
-@router.get("/catechumens/pending-communion", response_model=list[YouthProfileResponse])
-async def get_uncommunicated_youth(db: AsyncSession = Depends(get_db),
-                                   _current_user: dict = Depends(require_youth_chaplain)):
-    """Returns youth who are Baptised but waiting for First Communion."""
-    query = await db.execute(select(YouthProfileModel).where(YouthProfileModel.is_baptised == True,
-                                                             YouthProfileModel.is_communicant == False))
-    return query.scalars().all()
+@router.get("/catechumens/pending-communion", response_model=PaginatedResponse[YouthProfileResponse])
+async def get_uncommunicated_youth(
+        skip: int = Query(0, ge=0, description="Number of records to skip"),
+        limit: int = Query(20, ge=1, le=100, description="Max records to return per page"),
+        db: AsyncSession = Depends(get_db),
+        _current_user: dict = Depends(require_youth_chaplain)
+):
+    """Returns a paginated list of youth who are Baptised but waiting for First Communion."""
+    await set_parish_schema(db, _current_user.get("parish_id"))
+
+    count_query = await db.execute(
+        select(func.count(YouthProfileModel.id))
+        .where(YouthProfileModel.is_baptised == True, YouthProfileModel.is_communicant == False)
+    )
+    total_count = count_query.scalar() or 0
+
+    query = await db.execute(
+        select(YouthProfileModel)
+        .where(YouthProfileModel.is_baptised == True, YouthProfileModel.is_communicant == False)
+        .offset(skip)
+        .limit(limit)
+    )
+    records = query.scalars().all()
+
+    return {
+        "total_count": total_count,
+        "limit": limit,
+        "skip": skip,
+        "data": records
+    }
 
 
 # ==============================================================================
@@ -58,7 +127,9 @@ async def draft_action_plan(
         _current_user: dict = Depends(require_youth_chaplain)
 ):
     """YC drafts a new pastoral plan. Starts in DRAFT status."""
-    new_plan = YouthActionPlanModel(**plan_in.model_dump(), created_by=_current_user["email"], status="DRAFT")
+    await set_parish_schema(db, _current_user.get("parish_id"))
+
+    new_plan = YouthActionPlanModel(**plan_in.model_dump(), created_by=_current_user.get("email"), status="DRAFT")
     db.add(new_plan)
     await db.commit()
     await db.refresh(new_plan)
@@ -66,12 +137,18 @@ async def draft_action_plan(
 
 
 @router.put("/action-plans/{plan_id}/submit-pp")
-async def submit_plan_to_pp(plan_id: str, db: AsyncSession = Depends(get_db),
-                            _current_user: dict = Depends(require_youth_chaplain)):
+async def submit_plan_to_pp(
+        plan_id: str,
+        db: AsyncSession = Depends(get_db),
+        _current_user: dict = Depends(require_youth_chaplain)
+):
     """YC submits the draft to the Parish Priest for canonical approval."""
+    await set_parish_schema(db, _current_user.get("parish_id"))
+
     plan = (
         await db.execute(select(YouthActionPlanModel).where(YouthActionPlanModel.id == plan_id))).scalar_one_or_none()
-    if not plan: raise HTTPException(status_code=404, detail="Plan not found.")
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found.")
 
     plan.status = "PENDING_PP"
     await db.commit()
@@ -80,13 +157,19 @@ async def submit_plan_to_pp(plan_id: str, db: AsyncSession = Depends(get_db),
 
 @router.put("/action-plans/{plan_id}/review")
 async def pp_review_plan(
-        plan_id: str, approved: bool, feedback: str = "",
-        db: AsyncSession = Depends(get_db), _current_user: dict = Depends(require_parish_priest)
+        plan_id: str,
+        approved: bool,
+        feedback: str = "",
+        db: AsyncSession = Depends(get_db),
+        _current_user: dict = Depends(require_parish_priest)
 ):
     """Parish Priest reviews the plan. Can Approve or Reject with feedback."""
+    await set_parish_schema(db, _current_user.get("parish_id"))
+
     plan = (
         await db.execute(select(YouthActionPlanModel).where(YouthActionPlanModel.id == plan_id))).scalar_one_or_none()
-    if not plan: raise HTTPException(status_code=404, detail="Plan not found.")
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found.")
 
     plan.status = "APPROVED_PP" if approved else "DRAFT"
     plan.pp_feedback = feedback
@@ -95,9 +178,14 @@ async def pp_review_plan(
 
 
 @router.put("/action-plans/{plan_id}/submit-deanery")
-async def submit_plan_to_deanery(plan_id: str, db: AsyncSession = Depends(get_db),
-                                 _current_user: dict = Depends(require_youth_chaplain)):
+async def submit_plan_to_deanery(
+        plan_id: str,
+        db: AsyncSession = Depends(get_db),
+        _current_user: dict = Depends(require_youth_chaplain)
+):
     """Once approved by PP, the YC forwards the final plan to the Deanery Youth Chaplain."""
+    await set_parish_schema(db, _current_user.get("parish_id"))
+
     plan = (
         await db.execute(select(YouthActionPlanModel).where(YouthActionPlanModel.id == plan_id))).scalar_one_or_none()
     if not plan or plan.status != "APPROVED_PP":
@@ -113,12 +201,18 @@ async def submit_plan_to_deanery(plan_id: str, db: AsyncSession = Depends(get_db
 # 3. GENERATE ACTION PLAN PDF
 # ==============================================================================
 @router.get("/action-plans/{plan_id}/pdf")
-async def generate_plan_pdf(plan_id: str, db: AsyncSession = Depends(get_db),
-                            _current_user: dict = Depends(require_read_access)):
+async def generate_plan_pdf(
+        plan_id: str,
+        db: AsyncSession = Depends(get_db),
+        _current_user: dict = Depends(require_read_access)
+):
     """Generates a formatted PDF of the Action Plan for physical filing or distribution."""
+    await set_parish_schema(db, _current_user.get("parish_id"))
+
     plan = (
         await db.execute(select(YouthActionPlanModel).where(YouthActionPlanModel.id == plan_id))).scalar_one_or_none()
-    if not plan: raise HTTPException(status_code=404, detail="Plan not found.")
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found.")
 
     buffer = io.BytesIO()
     p = canvas.Canvas(buffer, pagesize=A4)
@@ -154,4 +248,5 @@ async def generate_plan_pdf(plan_id: str, db: AsyncSession = Depends(get_db),
     buffer.seek(0)
 
     return StreamingResponse(buffer, media_type="application/pdf", headers={
-        "Content-Disposition": f"attachment; filename=YouthPlan_{plan.academic_year}.pdf"})
+        "Content-Disposition": f"attachment; filename=YouthPlan_{plan.academic_year}.pdf"
+    })
