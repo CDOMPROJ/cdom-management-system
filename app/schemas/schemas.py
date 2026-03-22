@@ -238,3 +238,47 @@ class DiocesanContributionCreate(BaseModel):
     target_amount: Optional[float] = None
     actual_amount: float
     notes: Optional[str] = None
+
+# ==============================================================================
+# 5. GLOBAL SEARCH (RAPIDFUZZ)
+# ==============================================================================
+class GlobalSearchResult(BaseModel):
+    record_type: str
+    canonical_number: Optional[str] = None
+    first_name: str
+    last_name: str
+    date: date
+    parish_id: int
+    parish_name: str
+    match_score: float
+
+class SearchResponse(BaseModel):
+    query: str
+    results: List[GlobalSearchResult]
+
+
+from typing import Dict, Any
+
+
+# ==============================================================================
+# 6. GOVERNANCE & APPROVALS (PENDING ACTIONS)
+# ==============================================================================
+class PendingActionBase(BaseModel):
+    requested_by: EmailStr
+    action_type: str
+    target_table: str
+    target_record_id: str
+    proposed_payload: Dict[str, Any]
+
+
+class PendingActionCreate(PendingActionBase):
+    pass
+
+
+class PendingActionResponse(PendingActionBase):
+    id: uuid.UUID
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
