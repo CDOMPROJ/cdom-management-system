@@ -1,5 +1,5 @@
 import io
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,8 @@ from reportlab.lib.units import cm
 from reportlab.lib import colors
 
 from app.core.dependencies import get_db, require_bishop_access
-from app.models.all_models import DiocesanAnalyticsModel, ParishModel
+from app.models.all_models import DiocesanAnalyticsModel
+from app.ml.financial_forecaster import predict_next_year_contributions
 
 router = APIRouter()
 
@@ -53,6 +54,9 @@ async def generate_state_of_diocese_report(
     p = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
 
+    # Modern, timezone-aware datetime
+    current_time = datetime.now(timezone.utc)
+
     # Header section
     p.setFont("Helvetica-Bold", 18)
     p.drawCentredString(width / 2, height - 2.5 * cm, "CATHOLIC DIOCESE OF MANSA")
@@ -61,7 +65,7 @@ async def generate_state_of_diocese_report(
     p.drawCentredString(width / 2, height - 3.5 * cm, "Office of the Bishop")
 
     p.setFont("Helvetica-Oblique", 12)
-    p.drawCentredString(width / 2, height - 4.5 * cm, f"State of the Diocese Report - {datetime.utcnow().year}")
+    p.drawCentredString(width / 2, height - 4.5 * cm, f"State of the Diocese Report - {current_time.year}")
 
     # Divider line
     p.setLineWidth(1)
@@ -100,7 +104,7 @@ async def generate_state_of_diocese_report(
     p.setFillColor(colors.black)
     p.setFont("Helvetica-Oblique", 10)
     p.drawString(2 * cm, 2 * cm,
-                 f"Generated automatically by CDOM Management System on {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}")
+                 f"Generated automatically by CDOM Management System on {current_time.strftime('%Y-%m-%d %H:%M')} UTC")
 
     # Save and send
     p.showPage()
@@ -108,5 +112,23 @@ async def generate_state_of_diocese_report(
     buffer.seek(0)
 
     return StreamingResponse(buffer, media_type="application/pdf", headers={
-        "Content-Disposition": f"attachment; filename=CDOM_State_of_Diocese_{datetime.utcnow().year}.pdf"
+        "Content-Disposition": f"attachment; filename=CDOM_State_of_Diocese_{current_time.year}.pdf"
     })
+
+
+@router.get("/forecast/financials")
+async def get_financial_forecast(
+        fund_name: str = "Umutulo",
+        db: AsyncSession = Depends(get_db),
+        _current_user: dict = Depends(require_bishop_access)
+):
+    """
+    Executes the Machine Learning forecaster to predict future collections.
+    Defaults to Umutulo, but the Bishop can pass any obligatory fund name.
+    """
+    forecast_data = await predict_next_year_contributions(db, fund_name)
+
+    if forecast_data.get("status") == "insufficient_data":
+        raise HTTPException(status_code=400, detail=forecast_data["message"])
+
+    return forecast_data
