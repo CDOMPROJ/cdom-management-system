@@ -18,12 +18,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 SECRET_KEY = "cdom_super_secret_key_change_in_production"
 ALGORITHM = "HS256"
 
-
 async def get_db():
     """Yields a fresh, asynchronous database connection for each request."""
     async with AsyncSessionLocal() as session:
         yield session
-
 
 # ==============================================================================
 # 1. JWT DECODING & SINGLE SESSION VERIFICATION
@@ -56,7 +54,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     user_query = await db.execute(select(User).where(User.email == email))
     db_user = user_query.scalar_one_or_none()
 
-    # If the token's ID doesn't match the DB, it means they logged in elsewhere
     if not db_user or db_user.session_id != session_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -71,24 +68,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
         "tenant_schema": tenant_schema
     }
 
-    # Physical switch to the isolated Parish database schema
+    # Physical switch to the isolated Parish database schema (Bishop role bypass handled in routers)
     await db.execute(text(f'SET search_path TO "{tenant_schema}", public'))
     return user_data
-
 
 async def get_current_active_user(current_user: dict = Depends(get_current_user)):
     """Alias for backwards compatibility with existing routers."""
     return current_user
 
-
 # ==============================================================================
 # 2. ROLE-BASED ACCESS CONTROL (RBAC) GATES
 # ==============================================================================
 def require_read_access(user: dict = Depends(get_current_active_user)):
-    """
-    Base read access for Parish Data.
-    STRICT ENFORCEMENT: SysAdmins are fundamentally barred from reading pastoral data.
-    """
+    """STRICT ENFORCEMENT: SysAdmins are fundamentally barred from reading pastoral data."""
     if user["role"] == "SysAdmin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -96,12 +88,8 @@ def require_read_access(user: dict = Depends(get_current_active_user)):
         )
     return user
 
-
 def require_create_access(user: dict = Depends(get_current_active_user)):
-    """
-    Parish Secretaries, APs, PPs, and YCs can create canonical records.
-    Bishop, Dean, and SysAdmin cannot create parish-level records.
-    """
+    """Parish Secretaries, APs, PPs, and YCs can create canonical records."""
     allowed_roles = ["Parish Secretary", "Assistant Priest", "Parish Priest", "Parish Youth Chaplain"]
     if user["role"] not in allowed_roles:
         raise HTTPException(
@@ -110,9 +98,8 @@ def require_create_access(user: dict = Depends(get_current_active_user)):
         )
     return user
 
-
 def require_modify_access(user: dict = Depends(get_current_active_user)):
-    """APs and PPs can initiate modifications. Secretaries and YCs are blocked."""
+    """APs and PPs can initiate modifications."""
     if user["role"] not in ["Assistant Priest", "Parish Priest"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -120,10 +107,8 @@ def require_modify_access(user: dict = Depends(get_current_active_user)):
         )
     return user
 
-
-# --- YOUTH MINISTRY SPECIFIC GATES ---
 def require_youth_chaplain(user: dict = Depends(get_current_active_user)):
-    """Only allows Parish Youth Chaplains or PPs (for administrative oversight)."""
+    """Only allows Parish Youth Chaplains or PPs."""
     if user["role"] not in ["Parish Youth Chaplain", "Parish Priest"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -131,9 +116,8 @@ def require_youth_chaplain(user: dict = Depends(get_current_active_user)):
         )
     return user
 
-
 def require_parish_priest(user: dict = Depends(get_current_active_user)):
-    """Strictly reserved for the Parish Priest (used for Action Plan & Sacrament approvals)."""
+    """Strictly reserved for the Parish Priest."""
     if user["role"] != "Parish Priest":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -141,20 +125,23 @@ def require_parish_priest(user: dict = Depends(get_current_active_user)):
         )
     return user
 
-
 def require_sysadmin_access(user: dict = Depends(get_current_active_user)):
-    """
-    Strictly reserves endpoint for the Curia and IT Administration.
-    Used exclusively for creating new Dean, PP, AP, and Chaplain accounts.
-    """
-    allowed_roles = ["SysAdmin", "Bishop"]
-    if user["role"] not in allowed_roles:
+    """SysAdmin strictly for provisioning accounts."""
+    if user["role"] != "SysAdmin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access Denied: Only Curia or SysAdmins can provision new personnel accounts."
+            detail="Access Denied: SysAdmin access required to provision accounts."
         )
     return user
 
+def require_bishop_access(user: dict = Depends(get_current_active_user)):
+    """Exclusive gate for the Bishop of CDOM."""
+    if user["role"] != "Bishop":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access Denied: Exclusive access granted only to the Bishop of CDOM."
+        )
+    return user
 
 # ==============================================================================
 # 3. GOVERNANCE UTILITIES (AUDIT & APPROVAL QUEUES)
@@ -162,11 +149,7 @@ def require_sysadmin_access(user: dict = Depends(get_current_active_user)):
 async def process_modification_request(
         db: AsyncSession, user: dict, action_type: str, table_name: str, record_id: str, payload: dict
 ):
-    """
-    Core Governance Logic:
-    - Assistant Priest -> Sent to PendingAction queue.
-    - Parish Priest -> Executed immediately with an AuditLog entry.
-    """
+    """Core Governance Logic: AP -> Queue, PP -> Execute."""
     if user["role"] == "Assistant Priest":
         pending = PendingActionModel(
             requested_by=user["email"], action_type=action_type, target_table=table_name,
@@ -174,7 +157,6 @@ async def process_modification_request(
         )
         db.add(pending)
         await db.commit()
-        # Returns 202 to indicate "Accepted but not yet processed"
         raise HTTPException(
             status_code=status.HTTP_202_ACCEPTED,
             detail="Modification queued. Awaiting Parish Priest approval."
@@ -186,17 +168,4 @@ async def process_modification_request(
             record_id=str(record_id), changes=payload
         )
         db.add(audit)
-        return True  # The router can proceed to commit the actual change
-
-    def require_sysadmin_access(user: dict = Depends(get_current_active_user)):
-        """
-        Strictly reserves endpoint for the Curia and IT Administration.
-        Used for creating new Dean, PP, AP, and Chaplain accounts.
-        """
-        allowed_roles = ["SysAdmin", "Bishop"]
-        if user["role"] not in allowed_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access Denied: Only Curia or SysAdmins can provision new clergy accounts."
-            )
-        return user
+        return True

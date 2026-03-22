@@ -7,32 +7,32 @@ from app.models.all_models import DiocesanAnalyticsModel, ParishModel
 
 router = APIRouter()
 
+
 def verify_deanery_role(current_user: dict = Depends(get_current_active_user)):
-    """Ensures only a Dean, Bishop, Vicar General, or SysAdmin can view this."""
-    allowed_roles = ["Dean", "Bishop", "Vicar General", "SysAdmin"]
+    """Ensures only a Dean or the Bishop can view deanery analytics."""
+    allowed_roles = ["Dean", "Bishop"]
     if current_user.get("role") not in allowed_roles:
-        raise HTTPException(status_code=403, detail="Deanery-level access required.")
-    
+        raise HTTPException(status_code=403, detail="Executive or Deanery-level access required.")
+
     # If the user is a Dean, ensure they actually have a deanery assigned
     if current_user.get("role") == "Dean" and not current_user.get("deanery_id"):
         raise HTTPException(status_code=400, detail="Dean account is not linked to a Deanery.")
-        
+
     return current_user
+
 
 @router.get("/{deanery_id}/overview")
 async def get_deanery_overview(
-    deanery_id: int,
-    db: AsyncSession = Depends(get_db),
-    admin_user: dict = Depends(verify_deanery_role)
+        deanery_id: int,
+        db: AsyncSession = Depends(get_db),
+        admin_user: dict = Depends(verify_deanery_role)
 ):
     """Returns the aggregated totals for a specific Deanery."""
-    
-    # Security Check: A Dean can only view his OWN deanery. 
-    # Bishops and SysAdmins bypass this check.
+
+    # Security Check: A Dean can only view his OWN deanery. The Bishop bypasses this.
     if admin_user.get("role") == "Dean" and admin_user.get("deanery_id") != deanery_id:
         raise HTTPException(status_code=403, detail="You can only view analytics for your assigned Deanery.")
 
-    # We join the Analytics table with the Parish table to filter by deanery_id
     query = await db.execute(
         select(
             func.sum(DiocesanAnalyticsModel.total_baptisms_ytd).label('total_baptisms'),
@@ -48,7 +48,7 @@ async def get_deanery_overview(
         .where(ParishModel.deanery_id == deanery_id)
     )
     result = query.one()
-    
+
     target = result.total_target or 0
     actual = result.total_actual or 0
 
@@ -67,14 +67,15 @@ async def get_deanery_overview(
         }
     }
 
+
 @router.get("/{deanery_id}/parishes")
 async def get_deanery_parishes(
-    deanery_id: int,
-    db: AsyncSession = Depends(get_db),
-    admin_user: dict = Depends(verify_deanery_role)
+        deanery_id: int,
+        db: AsyncSession = Depends(get_db),
+        admin_user: dict = Depends(verify_deanery_role)
 ):
     """Returns the individual analytics rows for parishes strictly within this Deanery."""
-    
+
     if admin_user.get("role") == "Dean" and admin_user.get("deanery_id") != deanery_id:
         raise HTTPException(status_code=403, detail="Unauthorized.")
 
@@ -85,5 +86,5 @@ async def get_deanery_parishes(
         .order_by(DiocesanAnalyticsModel.parish_name)
     )
     parishes = query.scalars().all()
-    
+
     return {"parishes": parishes}
