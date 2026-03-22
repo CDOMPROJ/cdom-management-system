@@ -6,6 +6,7 @@ from app.core.config import settings
 # 1. ROUTER IMPORTS
 # ==========================================
 from app.api.v1 import (
+    bishop,
     auth,
     admin,
     audit,
@@ -57,6 +58,7 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["1.0 Authentication
 
 # SECTION 2: Executive Oversight
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["2.0 Bishop's Dashboard"])
+app.include_router(bishop.router, prefix="/api/v1/bishop", tags=["Bishop Executive Dashboard"])
 app.include_router(audit.router, prefix="/api/v1/audit", tags=["2.2 Governance & Audit Trail"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["4.0 The Gold Layer"])
 
