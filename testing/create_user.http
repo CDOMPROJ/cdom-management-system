@@ -1,0 +1,43 @@
+### ============================================================================
+### PP TOKEN FOR ST. CHRISTOPHER
+### ============================================================================
+@pp_token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJwcHN0Y2hyaXN0b3BoZXJAZG9tYW5zYS5vcmciLCJyb2xlIjoiUGFyaXNoIFByaWVzdCIsInBhcmlzaF9pZCI6MTcsImRlYW5lcnlfaWQiOjQsInRlbmFudF9zY2hlbWEiOiJwYXJpc2hfc3RfY2hyaXN0b3BoZXIiLCJzZXNzaW9uX2lkIjoiZjU2MTNkYzctYmE1Yy00ZTY2LWFlN2EtMzdiNjg5MzE3MWEzIiwiZXhwIjoxNzc0MTQzOTAyfQ.xL7GO2PZlMjJDHNSIjCuRG-EcVVQ0PBSo682ULGZwUk
+
+### ============================================================================
+### TEST 1: LOCAL TENANT SEARCH (Granular Sacramental Data)
+### ============================================================================
+# Searching '2026' guarantees a match against the seeded canonical numbers
+GET http://192.168.18.9:8000/api/v1/baptisms/search?q=bwlya
+Authorization: Bearer {{pp_token}}
+
+
+### ============================================================================
+### TEST 2: GLOBAL SEARCH ENGINE (Data Blind Overview)
+### ============================================================================
+# Notice the trailing slash after /search/ to prevent the token-stripping redirect!
+GET http://192.168.18.9:8000/api/v1/search/?q=bwlya
+Authorization: Bearer {{pp_token}}
+
+
+### ============================================================================
+### REGISTER A NEW BAPTISM (ST. CHRISTOPHER)
+### ============================================================================
+POST http://192.168.18.2:8000/api/v1/baptisms/
+Authorization: Bearer {{pp_token}}
+Content-Type: application/json
+
+{
+  "first_name": "Joseph",
+  "last_name": "Mulenga",
+  "dob": "2026-01-15",
+  "date_of_baptism": "2026-03-25",
+  "place_of_birth": "Mansa General Hospital",
+  "father_first_name": "Peter",
+  "father_last_name": "Mulenga",
+  "mother_first_name": "Mary",
+  "mother_last_name": "Bwalya",
+  "godparents": "John Phiri and Anna Banda",
+  "minister_of_baptism": "Fr. Thomas",
+  "village": "Senama",
+  "center": "Main Center"
+}

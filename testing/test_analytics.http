@@ -1,0 +1,28 @@
+### ============================================================================
+### RUN THE DIOCESAN AGGREGATION ENGINE
+### ============================================================================
+# We use the Parish Priest token, but in production, you would lock this to the Bishop.
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJwcHN0Y2hyaXN0b3BoZXJAZG9tYW5zYS5vcmciLCJyb2xlIjoiUGFyaXNoIFByaWVzdCIsInBhcmlzaF9pZCI6MTcsImRlYW5lcnlfaWQiOjQsInRlbmFudF9zY2hlbWEiOiJwYXJpc2hfc3RfY2hyaXN0b3BoZXIiLCJzZXNzaW9uX2lkIjoiZjU2MTNkYzctYmE1Yy00ZTY2LWFlN2EtMzdiNjg5MzE3MWEzIiwiZXhwIjoxNzc0MTQzOTAyfQ.xL7GO2PZlMjJDHNSIjCuRG-EcVVQ0PBSo682ULGZwUk
+
+# Calculate all statistics for the year 2026
+POST http://192.168.18.9:8000/api/v1/analytics/aggregate/2026
+Authorization: Bearer {{token}}
+
+
+### ============================================================================
+### TRAIN ML MODEL & GENERATE PREDICTIONS
+### ============================================================================
+POST http://192.168.18.9:8000/api/v1/analytics/predict/17
+Authorization: Bearer {{token}}
+
+
+### ============================================================================
+### GENERATE & DOWNLOAD THE BISHOP'S PDF REPORT
+### ============================================================================
+GET http://192.168.18.2:8000/api/v1/analytics/report/parish/17
+Authorization: Bearer {{token}}
+
+> {%
+    // This tells PyCharm to save the binary response as a physical PDF file!
+    client.log("Check your 'testing' folder in PyCharm for the downloaded PDF!");
+%}

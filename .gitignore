@@ -1,0 +1,20 @@
+# Python Virtual Environments
+.venv/
+venv/
+env/
+
+# Cache and Compiled Files
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Environment Variables & Secrets
+.env
+
+# PyCharm/IDE Settings
+.idea/
+.vscode/
+
+# Generated Output Tests
+*.pdf
+testing/*.pdf

@@ -1,0 +1,35 @@
+### ============================================================================
+### 1. REGISTER A CONFIRMATION (SINGLE ENTRY GLOBAL INDEX TEST)
+### ============================================================================
+# Be sure to paste your actual St. Christopher Parish Secretary token below!
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZWNzdGNocmlzdG9waGVyQGRvbWFuc2Eub3JnIiwicm9sZSI6IlBhcmlzaCBTZWNyZXRhcnkiLCJwYXJpc2hfaWQiOjE3LCJkZWFuZXJ5X2lkIjo0LCJ0ZW5hbnRfc2NoZW1hIjoicGFyaXNoX3N0X2NocmlzdG9waGVyIiwic2Vzc2lvbl9pZCI6IjQ3NWM5NDYzLTg1MTEtNGIzMC04MmY1LWQ3MTc3MTJhYTQyMCIsImV4cCI6MTc3NDA3MDc5MX0.VS8uMFFIcCLS_WTnxxa8vgh7nUuJ-EQT-Pte0t0TW9g
+
+POST http://192.168.18.9:8000/api/v1/confirmations/
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "first_name": "Emmanuel",
+  "middle_name": "Chanda",
+  "last_name": "Mwape",
+  "dob": "2010-11-20",
+  "father_first_name": "Joseph",
+  "father_last_name": "Mwape",
+  "mother_first_name": "Theresa",
+  "mother_last_name": "Bwalya",
+  "baptism_number": "112/2010",
+  "baptised_at": "St. Christopher Parish",
+  "confirmation_date": "2026-05-24",
+  "minister": "Bishop Patrick Chisanga",
+  "place_of_confirmation": "St. Christopher Parish",
+  "god_parent": "Michael Mumba",
+  "god_parent_is_baptised": true,
+  "god_parent_is_confirmed": true
+}
+
+
+### ============================================================================
+### 2. VERIFY GLOBAL INDEXING (SILENT SEARCH)
+### ============================================================================
+GET http://192.168.18.9:8000/api/v1/confirmations/search?q=Emmanuel
+Authorization: Bearer {{token}}

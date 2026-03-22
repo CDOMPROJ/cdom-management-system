@@ -1,0 +1,31 @@
+# Core API & Server
+fastapi==0.135.1
+uvicorn[standard]==0.24.0.post1
+pydantic-settings==2.1.0
+
+# Database & ORM
+sqlalchemy==2.0.48
+asyncpg
+alembic==1.12.1
+
+# Security & Authentication
+passlib[argon2]==1.7.4
+python-jose[cryptography]==3.3.0
+slowapi==0.1.8
+
+# Intelligence & Search
+rapidfuzz
+scikit-learn
+numpy
+
+# Infrastructure & Utilities
+httpx
+apscheduler==3.10.4
+fastapi-mail==1.4.1
+
+# Upcoming Phase Integrations (PDFs & S3)
+reportlab
+aioboto3
+
+# Run command
+# uvicorn app.main:app --host 192.168.18.9 --port 8000 --reload

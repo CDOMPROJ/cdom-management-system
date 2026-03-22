@@ -1,0 +1,57 @@
+### ============================================================================
+### 1. REGISTER A MIXED RELIGION MARRIAGE (DOUBLE ENTRY TEST)
+### ============================================================================
+# Be sure to paste your actual St. Christopher Parish Secretary token below!
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZWNzdGNocmlzdG9waGVyQGRvbWFuc2Eub3JnIiwicm9sZSI6IlBhcmlzaCBTZWNyZXRhcnkiLCJwYXJpc2hfaWQiOjE3LCJkZWFuZXJ5X2lkIjo0LCJ0ZW5hbnRfc2NoZW1hIjoicGFyaXNoX3N0X2NocmlzdG9waGVyIiwic2Vzc2lvbl9pZCI6IjQ3NWM5NDYzLTg1MTEtNGIzMC04MmY1LWQ3MTc3MTJhYTQyMCIsImV4cCI6MTc3NDA3MDc5MX0.VS8uMFFIcCLS_WTnxxa8vgh7nUuJ-EQT-Pte0t0TW9g
+
+POST http://192.168.18.9:8000/api/v1/marriages/
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "groom_first_name": "Peter",
+  "groom_last_name": "Mulenga",
+  "groom_father_first_name": "Joseph",
+  "groom_father_last_name": "Mulenga",
+  "groom_mother_first_name": "Agnes",
+  "groom_mother_last_name": "Chileshe",
+  "groom_dob": "1995-05-14",
+  "groom_baptised_at": "St. Christopher Parish",
+  "groom_baptism_number": "45/1995",
+  "groom_religion_category": "Catholic",
+  "groom_religion_specific": null,
+
+  "bride_first_name": "Sarah",
+  "bride_last_name": "Bwalya",
+  "bride_father_first_name": "John",
+  "bride_father_last_name": "Bwalya",
+  "bride_mother_first_name": "Mary",
+  "bride_mother_last_name": "Phiri",
+  "bride_dob": "1998-08-21",
+  "bride_baptised_at": "UCZ Grace Congregation",
+  "bride_baptism_number": "N/A",
+  "bride_religion_category": "Other Christian",
+  "bride_religion_specific": "UCZ",
+
+  "marriage_date": "2026-04-10",
+  "place_of_marriage": "St. Christopher Parish",
+  "minister": "Fr. Thomas",
+  "witness_1": "Michael Phiri",
+  "witness_2": "Grace Mulenga",
+  "banns_published_on": "2026-03-15",
+  "dispensation_from_impediment": "Mixed Religion Dispensation Granted"
+}
+
+
+### ============================================================================
+### 2. VERIFY DOUBLE ENTRY (SEARCH FOR GROOM)
+### ============================================================================
+GET http://192.168.18.9:8000/api/v1/marriages/search?q=Peter
+Authorization: Bearer {{token}}
+
+
+### ============================================================================
+### 3. VERIFY DOUBLE ENTRY (SEARCH FOR BRIDE)
+### ============================================================================
+GET http://192.168.18.9:8000/api/v1/marriages/search?q=Sarah
+Authorization: Bearer {{token}}

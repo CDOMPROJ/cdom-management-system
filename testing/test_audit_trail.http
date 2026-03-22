@@ -1,0 +1,40 @@
+### ============================================================================
+### 1. SECRETARY PROPOSES AN EDIT (THE OUTBOX)
+### ============================================================================
+@sec_token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZWNzdGNocmlzdG9waGVyQGRvbWFuc2Eub3JnIiwicm9sZSI6IlBhcmlzaCBTZWNyZXRhcnkiLCJwYXJpc2hfaWQiOjE3LCJkZWFuZXJ5X2lkIjo0LCJ0ZW5hbnRfc2NoZW1hIjoicGFyaXNoX3N0X2NocmlzdG9waGVyIiwic2Vzc2lvbl9pZCI6IjQ3NWM5NDYzLTg1MTEtNGIzMC04MmY1LWQ3MTc3MTJhYTQyMCIsImV4cCI6MTc3NDA3MDc5MX0.VS8uMFFIcCLS_WTnxxa8vgh7nUuJ-EQT-Pte0t0TW9g
+
+POST http://192.168.18.9:8000/api/v1/approvals/submit
+Content-Type: application/json
+Authorization: Bearer {{sec_token}}
+
+{
+  "action_type": "UPDATE",
+  "target_table": "baptisms",
+  "target_record_id": "b94a9457-1663-4205-957c-9fed23e2d21c",
+  "proposed_payload": {
+    "minister_of_baptism": "Bishop Patrick Chisanga",
+    "village": "Mansa Central - Phase 2"
+  }
+}
+
+> {%
+    client.global.set("action_id", response.body.action_id);
+    client.global.set("target_uuid", request.body.match(/"target_record_id":\s*"([^"]+)"/)[1]);
+%}
+
+
+### ============================================================================
+### 2. PRIEST APPROVES THE EDIT (TRIGGERS THE AUDIT LOG)
+### ============================================================================
+@pp_token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJwcHN0Y2hyaXN0b3BoZXJAZG9tYW5zYS5vcmciLCJyb2xlIjoiUGFyaXNoIFByaWVzdCIsInBhcmlzaF9pZCI6MTcsImRlYW5lcnlfaWQiOjQsInRlbmFudF9zY2hlbWEiOiJwYXJpc2hfc3RfY2hyaXN0b3BoZXIiLCJzZXNzaW9uX2lkIjoiZjU2MTNkYzctYmE1Yy00ZTY2LWFlN2EtMzdiNjg5MzE3MWEzIiwiZXhwIjoxNzc0MTQzOTAyfQ.xL7GO2PZlMjJDHNSIjCuRG-EcVVQ0PBSo682ULGZwUk
+
+POST http://192.168.18.9:8000/api/v1/approvals/6a8f84f7-04bf-4273-9a6e-ec630c2abde1/approve
+Authorization: Bearer {{pp_token}}
+
+
+### ============================================================================
+### 3. VERIFY THE TAMPER-PROOF AUDIT LOG
+### ============================================================================
+# This hits our new audit.py router to show the specific history for this record.
+GET http://192.168.18.9:8000/api/v1/audit/record/{{target_uuid}}
+Authorization: Bearer {{pp_token}}
