@@ -83,6 +83,29 @@ class AnnualParishCensusModel(Base):
     other_christians = Column(Integer, default=0)
     non_christians = Column(Integer, default=0)
 
+class DiocesanAnalyticsModel(Base):
+    """GOLD LAYER: Aggregated sacramental and financial totals per parish for executive dashboards."""
+    __tablename__ = "diocesan_analytics"
+    __table_args__ = {"schema": "public"}
+
+    id = Column(Integer, primary_key=True)
+    parish_id = Column(Integer, ForeignKey("public.parishes.id"))
+    parish_name = Column(String, index=True)
+    reporting_year = Column(Integer)
+
+    # Pastoral Totals (YTD - Year to Date)
+    total_baptisms_ytd = Column(Integer, default=0)
+    total_communions_ytd = Column(Integer, default=0)
+    total_confirmations_ytd = Column(Integer, default=0)
+    total_marriages_ytd = Column(Integer, default=0)
+    total_deaths_ytd = Column(Integer, default=0)
+
+    # Financial Totals (YTD)
+    diocesan_contributions_target_ytd = Column(Numeric(12, 2), default=0.00)
+    diocesan_contributions_actual_ytd = Column(Numeric(12, 2), default=0.00)
+
+    last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
 
 class DemographicTrendModel(Base):
     """GOLD LAYER: Pre-calculated trends for Diocesan Planning (ML Target)."""
