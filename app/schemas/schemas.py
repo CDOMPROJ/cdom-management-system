@@ -2,12 +2,12 @@ from pydantic import BaseModel, EmailStr, Field, validator
 from typing import Optional, List, Generic, TypeVar
 from datetime import date, datetime
 import uuid
+import enum
 
 # ==============================================================================
-# BASE GENERIC SCHEMAS
+# BASE GENERIC SCHEMAS & ENUMS
 # ==============================================================================
 T = TypeVar("T")
-
 
 class PaginatedResponse(BaseModel, Generic[T]):
     """Generic schema for returning paginated lists of data."""
@@ -16,6 +16,10 @@ class PaginatedResponse(BaseModel, Generic[T]):
     skip: int
     data: List[T]
 
+class ReligionCategory(str, enum.Enum):
+    CATHOLIC = "Catholic"
+    OTHER_CHRISTIAN = "Other Christian"
+    NON_CHRISTIAN = "Non-Christian"
 
 # ==============================================================================
 # 1. AUTHENTICATION & USERS
@@ -24,10 +28,8 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
-
 class TokenData(BaseModel):
     username: Optional[str] = None
-
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -37,7 +39,6 @@ class UserCreate(BaseModel):
     role: str
     parish_id: Optional[int] = None
     deanery_id: Optional[int] = None
-
 
 class UserResponse(BaseModel):
     id: uuid.UUID
@@ -59,25 +60,68 @@ class UserResponse(BaseModel):
 # --- Baptisms ---
 class BaptismBase(BaseModel):
     first_name: str
+    middle_name: Optional[str] = None  # Re-added middle name
     last_name: str
     dob: date
     date_of_baptism: date
-    place_of_birth: str
+    # ZERO TRUST: "place_of_birth", "deanery", and "parish_name" are intentionally
+    # omitted. The backend handles identity tracking automatically via auth token.
     father_first_name: str
     father_last_name: str
     mother_first_name: str
     mother_last_name: str
     godparents: str
     minister_of_baptism: str
-    village: Optional[str] = None
-    center: Optional[str] = None
-
+    village: str  # Kept for local analytics
+    center: str   # Kept for local analytics
 
 class BaptismCreate(BaptismBase):
     pass
 
-
 class BaptismResponse(BaptismBase):
+    id: uuid.UUID
+    canonical_number: str
+
+    class Config:
+        from_attributes = True
+
+
+# --- Marriages ---
+class MarriageBase(BaseModel):
+    # Groom (Aligned with V4 Frontend)
+    groom_first_name: str
+    groom_last_name: str
+    groom_dob: date
+    groom_religion: ReligionCategory
+    groom_baptism_number: Optional[str] = None
+    groom_diocese_of_baptism: Optional[str] = None
+    groom_parish_of_baptism: Optional[str] = None
+    groom_christian_denomination: Optional[str] = None
+    groom_non_christian_religion: Optional[str] = None
+
+    # Bride (Aligned with V4 Frontend)
+    bride_first_name: str
+    bride_last_name: str
+    bride_dob: date
+    bride_religion: ReligionCategory
+    bride_baptism_number: Optional[str] = None
+    bride_diocese_of_baptism: Optional[str] = None
+    bride_parish_of_baptism: Optional[str] = None
+    bride_christian_denomination: Optional[str] = None
+    bride_non_christian_religion: Optional[str] = None
+
+    # Event Details
+    date_of_marriage: date
+    center: Optional[str] = None
+    minister: str
+    witness_1: str
+    witness_2: str
+    notes: Optional[str] = None
+
+class MarriageCreate(MarriageBase):
+    pass
+
+class MarriageResponse(MarriageBase):
     id: uuid.UUID
     canonical_number: str
 
@@ -94,10 +138,8 @@ class FirstCommunionBase(BaseModel):
     minister: str
     place_of_baptism: str
 
-
 class FirstCommunionCreate(FirstCommunionBase):
     pass
-
 
 class FirstCommunionResponse(FirstCommunionBase):
     id: uuid.UUID
@@ -117,39 +159,10 @@ class ConfirmationBase(BaseModel):
     minister: str
     place_of_baptism: str
 
-
 class ConfirmationCreate(ConfirmationBase):
     pass
 
-
 class ConfirmationResponse(ConfirmationBase):
-    id: uuid.UUID
-    canonical_number: str
-
-    class Config:
-        from_attributes = True
-
-
-# --- Marriages ---
-class MarriageBase(BaseModel):
-    husband_first_name: str
-    husband_last_name: str
-    husband_baptism_number: str
-    wife_first_name: str
-    wife_last_name: str
-    wife_baptism_number: str
-    date_of_marriage: date
-    witness_1: str
-    witness_2: str
-    minister: str
-    notes: Optional[str] = None
-
-
-class MarriageCreate(MarriageBase):
-    pass
-
-
-class MarriageResponse(MarriageBase):
     id: uuid.UUID
     canonical_number: str
 
@@ -170,10 +183,8 @@ class DeathRegisterBase(BaseModel):
     baptism_number: Optional[str] = None
     next_of_kin: str
 
-
 class DeathRegisterCreate(DeathRegisterBase):
     pass
-
 
 class DeathRegisterResponse(DeathRegisterBase):
     id: uuid.UUID
@@ -196,17 +207,14 @@ class YouthProfileBase(BaseModel):
     is_baptised: bool = False
     is_communicant: bool = False
 
-
 class YouthProfileCreate(YouthProfileBase):
     pass
-
 
 class YouthProfileResponse(YouthProfileBase):
     id: uuid.UUID
 
     class Config:
         from_attributes = True
-
 
 class YouthActionPlanBase(BaseModel):
     academic_year: str
@@ -215,10 +223,8 @@ class YouthActionPlanBase(BaseModel):
     proposed_budget: float
     objectives: str
 
-
 class YouthActionPlanCreate(YouthActionPlanBase):
     pass
-
 
 class YouthActionPlanResponse(YouthActionPlanBase):
     id: uuid.UUID
@@ -238,6 +244,7 @@ class DiocesanContributionCreate(BaseModel):
     target_amount: Optional[float] = None
     actual_amount: float
     notes: Optional[str] = None
+
 
 # ==============================================================================
 # 5. GLOBAL SEARCH (RAPIDFUZZ)
@@ -259,7 +266,6 @@ class SearchResponse(BaseModel):
 
 from typing import Dict, Any
 
-
 # ==============================================================================
 # 6. GOVERNANCE & APPROVALS (PENDING ACTIONS)
 # ==============================================================================
@@ -270,10 +276,8 @@ class PendingActionBase(BaseModel):
     target_record_id: str
     proposed_payload: Dict[str, Any]
 
-
 class PendingActionCreate(PendingActionBase):
     pass
-
 
 class PendingActionResponse(PendingActionBase):
     id: uuid.UUID

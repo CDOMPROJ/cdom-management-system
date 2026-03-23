@@ -12,7 +12,7 @@ Base = declarative_base()
 # ENUMS (CANON LAW & DATA CLASSIFICATION)
 # ==============================================================================
 class ReligionCategory(str, enum.Enum):
-    """Categorizes religion for Canonical Marriage statistics (Mixed Religion vs Disparity of Cult)."""
+    """Categorizes religion for Canonical Marriage (Mixed Religion vs Disparity of Cult)."""
     CATHOLIC = "Catholic"
     OTHER_CHRISTIAN = "Other Christian"
     NON_CHRISTIAN = "Non-Christian"
@@ -72,16 +72,17 @@ class AnnualParishCensusModel(Base):
     parish_id = Column(Integer, ForeignKey("public.parishes.id"))
     reporting_year = Column(Integer)
 
-    # Staff & Converts (PDF Items 5, 6, 7)
+    # Staff & Converts
     catechumens_count = Column(Integer, default=0)
     converts_without_conditional_baptism = Column(Integer, default=0)
     paid_catechists = Column(Integer, default=0)
     voluntary_catechists = Column(Integer, default=0)
 
-    # Demographics (PDF Items 8, 9)
+    # Demographics
     total_catholic_population = Column(Integer, default=0)
     other_christians = Column(Integer, default=0)
     non_christians = Column(Integer, default=0)
+
 
 class DiocesanAnalyticsModel(Base):
     """GOLD LAYER: Aggregated sacramental and financial totals per parish for executive dashboards."""
@@ -93,7 +94,7 @@ class DiocesanAnalyticsModel(Base):
     parish_name = Column(String, index=True)
     reporting_year = Column(Integer)
 
-    # Pastoral Totals (YTD - Year to Date)
+    # Pastoral Totals (YTD)
     total_baptisms_ytd = Column(Integer, default=0)
     total_communions_ytd = Column(Integer, default=0)
     total_confirmations_ytd = Column(Integer, default=0)
@@ -116,8 +117,8 @@ class DemographicTrendModel(Base):
     year = Column(Integer)
 
     baptism_count = Column(Integer)
-    projected_youth_growth_rate = Column(Numeric(5, 2))  # Predicted by ML
-    predicted_sacrament_demand = Column(JSONB)  # e.g., {"Confirmations_2027": 150}
+    projected_youth_growth_rate = Column(Numeric(5, 2))
+    predicted_sacrament_demand = Column(JSONB)
     last_updated = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -125,10 +126,6 @@ class DemographicTrendModel(Base):
 # SECTION 2: PARISH SCHEMA (GOVERNANCE & AUDIT TRAIL)
 # ==============================================================================
 class AuditLogModel(Base):
-    """
-    A tamper-proof ledger tracking all approved modifications to canonical records.
-    Moved to the 'public' schema so the Bishop can audit the entire Diocese from one table.
-    """
     __tablename__ = "audit_logs"
     __table_args__ = {"schema": "public"}
 
@@ -164,19 +161,27 @@ class BaptismModel(Base):
     row_number = Column(Integer)
     registry_year = Column(Integer)
     formatted_number = Column(String, unique=True, index=True)
+
+    # REVISED: Middle Name explicit, Place of Birth dropped
     first_name = Column(String)
     middle_name = Column(String, nullable=True)
     last_name = Column(String)
-    dob = Column(Date)  # REQUIRED for statistical age bracketing
+    dob = Column(Date)
     date_of_baptism = Column(Date)
     minister_of_baptism = Column(String)
+
+    # Parental
     father_first_name = Column(String)
     father_last_name = Column(String)
     mother_first_name = Column(String)
     mother_last_name = Column(String)
     godparents = Column(String)
+
+    # Analytics
     village = Column(String)
     center = Column(String)
+
+    # Relationships
     first_communion_id = Column(UUID(as_uuid=True), nullable=True)
     confirmation_id = Column(UUID(as_uuid=True), nullable=True)
     marriage_id = Column(UUID(as_uuid=True), nullable=True)
@@ -213,7 +218,7 @@ class ConfirmationModel(Base):
     first_name = Column(String)
     middle_name = Column(String, nullable=True)
     last_name = Column(String)
-    dob = Column(Date)  # REQUIRED for statistical age bracketing (Adult vs Child)
+    dob = Column(Date)
     father_first_name = Column(String)
     father_last_name = Column(String)
     mother_first_name = Column(String)
@@ -232,44 +237,52 @@ class MarriageModel(Base):
     __tablename__ = "marriages"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     row_number = Column(Integer)
-    sequential_number = Column(Integer)
+    sequential_number = Column(Integer, nullable=True)
     registry_year = Column(Integer)
     formatted_number = Column(String, unique=True, index=True)
 
-    # Groom Details
+    # REVISED: Groom Details matching Frontend Schema
     groom_first_name = Column(String)
     groom_middle_name = Column(String, nullable=True)
     groom_last_name = Column(String)
-    groom_father_first_name = Column(String)
-    groom_father_last_name = Column(String)
-    groom_mother_first_name = Column(String)
-    groom_mother_last_name = Column(String)
     groom_dob = Column(Date)
-    groom_baptised_at = Column(String)
-    groom_baptism_number = Column(String, index=True)
-    groom_religion_category = Column(Enum(ReligionCategory), default=ReligionCategory.CATHOLIC, nullable=False)
-    groom_religion_specific = Column(String, nullable=True)  # e.g., "SDA", "Muslim"
+    groom_religion = Column(Enum(ReligionCategory), default=ReligionCategory.CATHOLIC, nullable=False)
+    groom_baptism_number = Column(String, index=True, nullable=True)
+    groom_diocese_of_baptism = Column(String, nullable=True)
+    groom_parish_of_baptism = Column(String, nullable=True)
+    groom_christian_denomination = Column(String, nullable=True)
+    groom_non_christian_religion = Column(String, nullable=True)
 
-    # Bride Details
+    # Made nullable to allow backwards compatibility with frontend that doesn't capture parents yet
+    groom_father_first_name = Column(String, nullable=True)
+    groom_father_last_name = Column(String, nullable=True)
+    groom_mother_first_name = Column(String, nullable=True)
+    groom_mother_last_name = Column(String, nullable=True)
+
+    # REVISED: Bride Details matching Frontend Schema
     bride_first_name = Column(String)
     bride_middle_name = Column(String, nullable=True)
     bride_last_name = Column(String)
-    bride_father_first_name = Column(String)
-    bride_father_last_name = Column(String)
-    bride_mother_first_name = Column(String)
-    bride_mother_last_name = Column(String)
     bride_dob = Column(Date)
-    bride_baptised_at = Column(String)
-    bride_baptism_number = Column(String, index=True)
-    bride_religion_category = Column(Enum(ReligionCategory), default=ReligionCategory.CATHOLIC, nullable=False)
-    bride_religion_specific = Column(String, nullable=True)  # e.g., "UCZ", "Traditional"
+    bride_religion = Column(Enum(ReligionCategory), default=ReligionCategory.CATHOLIC, nullable=False)
+    bride_baptism_number = Column(String, index=True, nullable=True)
+    bride_diocese_of_baptism = Column(String, nullable=True)
+    bride_parish_of_baptism = Column(String, nullable=True)
+    bride_christian_denomination = Column(String, nullable=True)
+    bride_non_christian_religion = Column(String, nullable=True)
+
+    bride_father_first_name = Column(String, nullable=True)
+    bride_father_last_name = Column(String, nullable=True)
+    bride_mother_first_name = Column(String, nullable=True)
+    bride_mother_last_name = Column(String, nullable=True)
 
     # Event Details
     marriage_date = Column(Date)
-    place_of_marriage = Column(String)
+    center = Column(String, nullable=True)  # Replacing place_of_marriage to match frontend center
     minister = Column(String)
     witness_1 = Column(String)
     witness_2 = Column(String)
+    notes = Column(Text, nullable=True)  # V4 Notes
     banns_published_on = Column(Date, nullable=True)
     dispensation_from_impediment = Column(String, nullable=True)
 
@@ -321,7 +334,6 @@ class DiocesanContributionModel(Base):
 # SECTION 5: PARISH SCHEMA (YOUTH MINISTRY & CATECHESIS)
 # ==============================================================================
 class YouthProfileModel(Base):
-    """Tracks children and youth demographics, catechumens, and sacramental progress."""
     __tablename__ = "youth_profiles"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     first_name = Column(String, index=True)
@@ -331,7 +343,6 @@ class YouthProfileModel(Base):
     contact_number = Column(String, nullable=True)
     village_center = Column(String)
 
-    # Sacramental Tracking
     is_baptised = Column(Boolean, default=False)
     is_communicant = Column(Boolean, default=False)
     is_confirmed = Column(Boolean, default=False)
@@ -341,7 +352,6 @@ class YouthProfileModel(Base):
 
 
 class YouthActionPlanModel(Base):
-    """Workflow model for Youth Chaplains creating plans for Parish Priest approval."""
     __tablename__ = "youth_action_plans"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     academic_year = Column(Integer)
@@ -350,7 +360,6 @@ class YouthActionPlanModel(Base):
     target_demographic = Column(String)
     proposed_budget = Column(Numeric(10, 2), default=0.00)
 
-    # State Machine: DRAFT -> PENDING_PP -> APPROVED_PP -> SUBMITTED_DEANERY
     status = Column(String, default="DRAFT")
     pp_feedback = Column(Text, nullable=True)
 

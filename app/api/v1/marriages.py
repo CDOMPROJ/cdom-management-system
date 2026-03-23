@@ -1,17 +1,17 @@
 from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_, text
+from sqlalchemy import select, func, text
 from rapidfuzz import process
 
 from app.core.dependencies import get_db, require_create_access, require_read_access
-from app.models.all_models import MarriageModel, GlobalRegistryIndex, ParishModel
-from app.schemas.schemas import MarriageCreate  # Assuming this exists in your schemas.py
+from app.models.all_models import MarriageModel, GlobalRegistryIndex
+from app.schemas.schemas import MarriageCreate
 
 router = APIRouter()
 
 
 # ==============================================================================
-# 1. REGISTER MARRIAGE (WITH DOUBLE-ENTRY GLOBAL INDEXING)
+# 1. REGISTER MARRIAGE (DOUBLE-ENTRY GLOBAL INDEXING)
 # ==============================================================================
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def register_marriage(
@@ -20,10 +20,11 @@ async def register_marriage(
         _current_user: dict = Depends(require_create_access)
 ):
     """
-    Creates the canonical marriage record in the Parish schema and creates
-    TWO shadow entries (Groom and Bride) in the Global CDOM Index.
+    Creates the canonical marriage record. Generates TWO shadow entries
+    (one for the Groom, one for the Bride) in the Global CDOM Index.
     """
-    current_year = marriage_in.marriage_date.year
+    # Fixed: Schema uses date_of_marriage
+    current_year = marriage_in.date_of_marriage.year
 
     # 1. Generate Canonical Number
     query = await db.execute(
@@ -37,15 +38,16 @@ async def register_marriage(
         **marriage_in.model_dump(),
         row_number=new_row,
         registry_year=current_year,
-        formatted_number=canonical_number
+        formatted_number=canonical_number,
+        marriage_date=marriage_in.date_of_marriage  # Map the base schema field to DB column
     )
     db.add(new_marriage)
-    await db.flush()  # Flush to get the ID without committing yet
+    await db.flush()
 
     # 3. Switch to Public Schema for Global Indexing
     await db.execute(text('SET search_path TO public'))
 
-    # 4. The "Double Entry" Logic
+    # 4. The "Double Entry" Logic (Groom and Bride indexed separately)
     groom_entry = GlobalRegistryIndex(
         first_name=new_marriage.groom_first_name,
         last_name=new_marriage.groom_last_name,
@@ -65,7 +67,7 @@ async def register_marriage(
     db.add_all([groom_entry, bride_entry])
     await db.commit()
 
-    # Securely reset context back to the private schema just in case
+    # 5. Securely reset context back to the private schema
     await db.execute(text(f'SET search_path TO "{_current_user["tenant_schema"]}", public'))
 
     return {
@@ -94,12 +96,14 @@ async def search_marriages(
     record_map: list[MarriageModel] = []
 
     for record in rows:
-        search_str = f"{record.groom_first_name} {record.groom_last_name} {record.bride_first_name} {record.bride_last_name} {record.formatted_number}".lower()
+        groom_middle = record.groom_middle_name if record.groom_middle_name else ""
+        bride_middle = record.bride_middle_name if record.bride_middle_name else ""
+
+        search_str = f"{record.groom_first_name} {groom_middle} {record.groom_last_name} {record.bride_first_name} {bride_middle} {record.bride_last_name} {record.formatted_number}".lower()
         search_strings.append(search_str)
         record_map.append(record)
 
     fuzzy_results = process.extract(q.lower(), search_strings, limit=20, score_cutoff=65.0)
-
     formatted_results = [record_map[match_index] for _, _, match_index in fuzzy_results]
 
     return {
