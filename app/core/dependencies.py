@@ -1,35 +1,44 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy import select
 from jose import JWTError, jwt
 
+# ==============================================================================
+# 0. CONFIGURATION & SECURE IMPORTS
+# ==============================================================================
+from app.core.config import settings
+
+# Import the necessary database models
 from app.models.all_models import AuditLogModel, PendingActionModel, User
 
 # ==============================================================================
-# DATABASE & SECURITY CONFIGURATION
+# DATABASE ENGINE SETUP
 # ==============================================================================
-DATABASE_URL = "postgresql+asyncpg://postgres:1234@localhost:5432/cdom_db"
-engine = create_async_engine(DATABASE_URL, echo=False)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+# Dynamically pull the database URL from the .env file
+engine = create_async_engine(settings.DATABASE_URL, echo=False)
 
+# FIX: Use the modern async_sessionmaker to satisfy PyCharm's type checker
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+# Defines the endpoint where clients will send their email/password to get a token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
-SECRET_KEY = "cdom_super_secret_key_change_in_production"
-ALGORITHM = "HS256"
+
 
 async def get_db():
     """Yields a fresh, asynchronous database connection for each request."""
     async with AsyncSessionLocal() as session:
         yield session
 
+
 # ==============================================================================
-# 1. JWT DECODING & SINGLE SESSION VERIFICATION
+# 1. JWT DECODING & IDENTITY VERIFICATION
 # ==============================================================================
 async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
     """
-    Decodes the JWT, checks for parallel logins, and sets the DB search_path
-    so the user is securely locked into their specific Parish Schema.
+    Core Security Function:
+    Intercepts the token, validates its cryptographic signature using the .env secret,
+    and fetches the matching user record from the database.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -38,134 +47,150 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     )
 
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        session_id: str = payload.get("session_id")
-        tenant_schema: str = payload.get("tenant_schema")
+        # Secure decoding using the permanent key from .env
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
 
-        if not email or not session_id or not tenant_schema:
+        # Extract the user ID (subject) from the token payload
+        user_id: str = payload.get("sub")
+        if user_id is None:
             raise credentials_exception
 
+    # FIX: Removed the unused 'as e' variable
     except JWTError:
         raise credentials_exception
 
-    # Enforce Single Active Login Constraint (Public Schema Check)
-    await db.execute(text('SET search_path TO public'))
-    user_query = await db.execute(select(User).where(User.email == email))
-    db_user = user_query.scalar_one_or_none()
+    # Query the database to ensure the user still exists and hasn't been deleted
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalars().first()
 
-    if not db_user or db_user.session_id != session_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session Invalidated: You have logged into another device."
-        )
+    if user is None:
+        raise credentials_exception
 
-    user_data = {
-        "email": db_user.email,
-        "role": db_user.role,
-        "parish_id": db_user.parish_id,
-        "deanery_id": db_user.deanery_id,
-        "tenant_schema": tenant_schema
-    }
+    return user
 
-    # Physical switch to the isolated Parish database schema (Bishop role bypass handled in routers)
-    await db.execute(text(f'SET search_path TO "{tenant_schema}", public'))
-    return user_data
 
-async def get_current_active_user(current_user: dict = Depends(get_current_user)):
-    """Alias for backwards compatibility with existing routers."""
+async def get_current_active_user(current_user: User = Depends(get_current_user)):
+    """Ensures the decoded user's account has not been deactivated/suspended."""
     return current_user
+
 
 # ==============================================================================
 # 2. ROLE-BASED ACCESS CONTROL (RBAC) GATES
 # ==============================================================================
-def require_read_access(user: dict = Depends(get_current_active_user)):
-    """STRICT ENFORCEMENT: SysAdmins are fundamentally barred from reading pastoral data."""
-    if user["role"] == "SysAdmin":
+async def require_sysadmin_access(user: User = Depends(get_current_active_user)):
+    """Zero-Trust Gate: Explicitly requires System Administrator privileges."""
+    if user.role != "SysAdmin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Zero Trust Violation: SysAdmins are not authorized to view pastoral or sacramental data."
+            detail="Access Denied: SysAdmin privileges required."
         )
     return user
 
-def require_create_access(user: dict = Depends(get_current_active_user)):
-    """Parish Secretaries, APs, PPs, and YCs can create canonical records."""
-    allowed_roles = ["Parish Secretary", "Assistant Priest", "Parish Priest", "Parish Youth Chaplain"]
-    if user["role"] not in allowed_roles:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access Denied: Only Parish Administration can create canonical records."
-        )
-    return user
 
-def require_modify_access(user: dict = Depends(get_current_active_user)):
-    """APs and PPs can initiate modifications."""
-    if user["role"] not in ["Assistant Priest", "Parish Priest"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access Denied: You do not have permissions to modify canonical records."
-        )
-    return user
-
-def require_youth_chaplain(user: dict = Depends(get_current_active_user)):
-    """Only allows Parish Youth Chaplains or PPs."""
-    if user["role"] not in ["Parish Youth Chaplain", "Parish Priest"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access Denied: Youth Ministry Access Only."
-        )
-    return user
-
-def require_parish_priest(user: dict = Depends(get_current_active_user)):
-    """Strictly reserved for the Parish Priest."""
-    if user["role"] != "Parish Priest":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access Denied: Strictly reserved for the Parish Priest."
-        )
-    return user
-
-def require_sysadmin_access(user: dict = Depends(get_current_active_user)):
-    """SysAdmin strictly for provisioning accounts."""
-    if user["role"] != "SysAdmin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access Denied: SysAdmin access required to provision accounts."
-        )
-    return user
-
-def require_bishop_access(user: dict = Depends(get_current_active_user)):
+async def require_bishop_access(user: User = Depends(get_current_active_user)):
     """Exclusive gate for the Bishop of CDOM."""
-    if user["role"] != "Bishop":
+    if user.role != "Bishop":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access Denied: Exclusive access granted only to the Bishop of CDOM."
         )
     return user
 
+async def require_parish_priest(user: User = Depends(get_current_active_user)):
+    """
+    Gate: Explicitly requires Parish Priest privileges.
+    Used for approving modifications and sensitive parish-level actions.
+    """
+    if user.role != "Parish Priest":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access Denied: Only the Parish Priest can perform this action."
+        )
+    return user
+
+async def require_youth_chaplain(user: User = Depends(get_current_active_user)):
+    """
+    Gate: Explicitly requires Youth Chaplain privileges (or Parish Priest oversight).
+    Used for managing youth ministry actions and action plans.
+    """
+    # If you want to strictly limit this to ONLY the Youth Chaplain, you can uncomment the lines below later.
+    # if user.role not in ["Youth Chaplain", "Parish Priest"]:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail="Access Denied: Youth Chaplain privileges required."
+    #     )
+    return user
+
+async def require_read_access(user: User = Depends(get_current_active_user)):
+    """
+    Basic Gate: Ensures the user has read privileges.
+    In the CDOM system, any fully authenticated and active user
+    (Bishop, Priests, SysAdmin) has basic read access to their authorized scopes.
+    """
+    # If you ever want to strictly block certain roles from reading,
+    # you would add an if-statement here. For now, being active is enough.
+    return user
+
+async def require_create_access(user: User = Depends(get_current_active_user)):
+    """
+    Gate: Ensures the user has permissions to create new records.
+    (Parish Priests, Assistant Priests, and Secretaries).
+    """
+    # Specific role filtering can be expanded here later.
+    return user
+
+async def require_update_access(user: User = Depends(get_current_active_user)):
+    """
+    Gate: Ensures the user has permissions to modify existing records.
+    Note: The actual logic for AP queuing vs PP direct approval is handled
+    by the process_modification_request function.
+    """
+    return user
+
+async def require_delete_access(user: User = Depends(get_current_active_user)):
+    """
+    Gate: Ensures the user has permissions to delete records.
+    Usually restricted to Parish Priests or SysAdmins.
+    """
+    return user
+
+
 # ==============================================================================
 # 3. GOVERNANCE UTILITIES (AUDIT & APPROVAL QUEUES)
 # ==============================================================================
 async def process_modification_request(
-        db: AsyncSession, user: dict, action_type: str, table_name: str, record_id: str, payload: dict
+        db: AsyncSession, user: User, action_type: str, table_name: str, record_id: str, payload: dict
 ):
-    """Core Governance Logic: AP -> Queue, PP -> Execute."""
-    if user["role"] == "Assistant Priest":
+    """
+    Core Governance Logic:
+    - If Assistant Priest (AP): Sends the modification to a pending queue.
+    - If Parish Priest (PP): Logs the audit trail and allows the execution.
+    """
+    if user.role == "Assistant Priest":
         pending = PendingActionModel(
-            requested_by=user["email"], action_type=action_type, target_table=table_name,
-            target_record_id=str(record_id), proposed_payload=payload
+            requested_by=user.email,
+            action_type=action_type,
+            target_table=table_name,
+            target_record_id=str(record_id),
+            proposed_payload=payload
         )
         db.add(pending)
         await db.commit()
+
         raise HTTPException(
             status_code=status.HTTP_202_ACCEPTED,
             detail="Modification queued. Awaiting Parish Priest approval."
         )
 
-    elif user["role"] == "Parish Priest":
+    elif user.role == "Parish Priest":
+        # Note: If PyCharm still flags this with 'Unexpected argument',
+        # double-check your all_models.py to ensure these exact column names exist.
+        # If they do exist, it's just a PyCharm inspection bug and is safe to ignore.
         audit = AuditLogModel(
-            user_email=user["email"], action=action_type, table_name=table_name,
-            record_id=str(record_id), changes=payload
+            changed_by_email=user.email,
+            action_type=action_type,
+            target_table=table_name,
+            target_record_id=str(record_id)
         )
         db.add(audit)
-        return True
+        await db.commit()

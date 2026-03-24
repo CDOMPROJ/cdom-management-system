@@ -9,6 +9,7 @@ from app.api.v1 import (
     bishop,
     auth,
     admin,
+    users,
     audit,
     baptisms,
     first_communions,
@@ -55,6 +56,7 @@ app.add_middleware(
 
 # SECTION 1: Identity & Access Management (IAM)
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["1.0 Authentication & IAM"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["Users & Provisioning"])
 
 # SECTION 2: Executive Oversight
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["2.0 Bishop's Dashboard"])

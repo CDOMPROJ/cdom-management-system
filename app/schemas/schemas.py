@@ -1,35 +1,85 @@
-from pydantic import BaseModel, EmailStr, Field, validator
-from typing import Optional, List, Generic, TypeVar
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from typing import Optional, List, Generic, TypeVar, Dict, Any
 from datetime import date, datetime
 import uuid
 import enum
+import re
 
-# ==============================================================================
-# BASE GENERIC SCHEMAS & ENUMS
-# ==============================================================================
 T = TypeVar("T")
 
+
 class PaginatedResponse(BaseModel, Generic[T]):
-    """Generic schema for returning paginated lists of data."""
     total_count: int
     limit: int
     skip: int
     data: List[T]
+
 
 class ReligionCategory(str, enum.Enum):
     CATHOLIC = "Catholic"
     OTHER_CHRISTIAN = "Other Christian"
     NON_CHRISTIAN = "Non-Christian"
 
+
 # ==============================================================================
-# 1. AUTHENTICATION & USERS
+# 1. AUTHENTICATION, USERS & MFA
 # ==============================================================================
-class Token(BaseModel):
-    access_token: str
-    token_type: str
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class LoginResponse(BaseModel):
+    """Dynamically returns either a full JWT, or demands MFA with a temp token."""
+    access_token: Optional[str] = None
+    token_type: str = "bearer"
+    mfa_required: bool = False
+    temp_token: Optional[str] = None
+    message: Optional[str] = None
+
+
+class MFASetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+
+
+class MFAVerifyRequest(BaseModel):
+    temp_token: Optional[str] = None
+    code: str
+
+
+class UserInviteRequest(BaseModel):
+    email: EmailStr
+    personal_email: EmailStr
+    role: str
+    parish_id: Optional[int] = None
+    deanery_id: Optional[int] = None
+
+
+class UserSetupRequest(BaseModel):
+    """Payload submitted by the user to finalize account. Enforces password security."""
+    token: str
+    first_name: str
+    last_name: str
+    password: str
+
+    @field_validator('password')
+    @classmethod
+    def password_complexity(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        if not any(char.isdigit() for char in v):
+            raise ValueError('Password must contain at least one number')
+        if not any(char.isupper() for char in v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError('Password must contain at least one special character')
+        return v
+
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -40,6 +90,7 @@ class UserCreate(BaseModel):
     parish_id: Optional[int] = None
     deanery_id: Optional[int] = None
 
+
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: EmailStr
@@ -47,6 +98,7 @@ class UserResponse(BaseModel):
     last_name: str
     role: str
     is_active: bool
+    mfa_enabled: bool
     parish_id: Optional[int] = None
 
     class Config:
@@ -54,29 +106,34 @@ class UserResponse(BaseModel):
 
 
 # ==============================================================================
-# 2. SACRAMENTAL REGISTERS
+# 2. SACRAMENTAL REGISTERS (WITH DATE GOVERNANCE)
 # ==============================================================================
-
-# --- Baptisms ---
 class BaptismBase(BaseModel):
     first_name: str
-    middle_name: Optional[str] = None  # Re-added middle name
+    middle_name: Optional[str] = None
     last_name: str
     dob: date
     date_of_baptism: date
-    # ZERO TRUST: "place_of_birth", "deanery", and "parish_name" are intentionally
-    # omitted. The backend handles identity tracking automatically via auth token.
     father_first_name: str
     father_last_name: str
     mother_first_name: str
     mother_last_name: str
     godparents: str
     minister_of_baptism: str
-    village: str  # Kept for local analytics
-    center: str   # Kept for local analytics
+    village: str
+    center: str
+
+    @field_validator('dob', 'date_of_baptism')
+    @classmethod
+    def dates_cannot_be_in_future(cls, v: date) -> date:
+        if v > date.today():
+            raise ValueError('Date cannot be in the future')
+        return v
+
 
 class BaptismCreate(BaptismBase):
     pass
+
 
 class BaptismResponse(BaptismBase):
     id: uuid.UUID
@@ -86,9 +143,7 @@ class BaptismResponse(BaptismBase):
         from_attributes = True
 
 
-# --- Marriages ---
 class MarriageBase(BaseModel):
-    # Groom (Aligned with V4 Frontend)
     groom_first_name: str
     groom_last_name: str
     groom_dob: date
@@ -99,7 +154,6 @@ class MarriageBase(BaseModel):
     groom_christian_denomination: Optional[str] = None
     groom_non_christian_religion: Optional[str] = None
 
-    # Bride (Aligned with V4 Frontend)
     bride_first_name: str
     bride_last_name: str
     bride_dob: date
@@ -110,7 +164,6 @@ class MarriageBase(BaseModel):
     bride_christian_denomination: Optional[str] = None
     bride_non_christian_religion: Optional[str] = None
 
-    # Event Details
     date_of_marriage: date
     center: Optional[str] = None
     minister: str
@@ -118,8 +171,17 @@ class MarriageBase(BaseModel):
     witness_2: str
     notes: Optional[str] = None
 
+    @field_validator('groom_dob', 'bride_dob', 'date_of_marriage')
+    @classmethod
+    def dates_cannot_be_in_future(cls, v: date) -> date:
+        if v > date.today():
+            raise ValueError('Date cannot be in the future')
+        return v
+
+
 class MarriageCreate(MarriageBase):
     pass
+
 
 class MarriageResponse(MarriageBase):
     id: uuid.UUID
@@ -129,7 +191,6 @@ class MarriageResponse(MarriageBase):
         from_attributes = True
 
 
-# --- First Communions ---
 class FirstCommunionBase(BaseModel):
     first_name: str
     last_name: str
@@ -138,8 +199,17 @@ class FirstCommunionBase(BaseModel):
     minister: str
     place_of_baptism: str
 
+    @field_validator('date_of_communion')
+    @classmethod
+    def dates_cannot_be_in_future(cls, v: date) -> date:
+        if v > date.today():
+            raise ValueError('Date cannot be in the future')
+        return v
+
+
 class FirstCommunionCreate(FirstCommunionBase):
     pass
+
 
 class FirstCommunionResponse(FirstCommunionBase):
     id: uuid.UUID
@@ -149,7 +219,6 @@ class FirstCommunionResponse(FirstCommunionBase):
         from_attributes = True
 
 
-# --- Confirmations ---
 class ConfirmationBase(BaseModel):
     first_name: str
     last_name: str
@@ -159,8 +228,17 @@ class ConfirmationBase(BaseModel):
     minister: str
     place_of_baptism: str
 
+    @field_validator('date_of_confirmation')
+    @classmethod
+    def dates_cannot_be_in_future(cls, v: date) -> date:
+        if v > date.today():
+            raise ValueError('Date cannot be in the future')
+        return v
+
+
 class ConfirmationCreate(ConfirmationBase):
     pass
+
 
 class ConfirmationResponse(ConfirmationBase):
     id: uuid.UUID
@@ -170,7 +248,6 @@ class ConfirmationResponse(ConfirmationBase):
         from_attributes = True
 
 
-# --- Death Register ---
 class DeathRegisterBase(BaseModel):
     first_name: str
     last_name: str
@@ -183,8 +260,17 @@ class DeathRegisterBase(BaseModel):
     baptism_number: Optional[str] = None
     next_of_kin: str
 
+    @field_validator('date_of_death', 'date_of_burial')
+    @classmethod
+    def dates_cannot_be_in_future(cls, v: date) -> date:
+        if v > date.today():
+            raise ValueError('Date cannot be in the future')
+        return v
+
+
 class DeathRegisterCreate(DeathRegisterBase):
     pass
+
 
 class DeathRegisterResponse(DeathRegisterBase):
     id: uuid.UUID
@@ -207,8 +293,17 @@ class YouthProfileBase(BaseModel):
     is_baptised: bool = False
     is_communicant: bool = False
 
+    @field_validator('dob')
+    @classmethod
+    def dob_cannot_be_in_future(cls, v: date) -> date:
+        if v > date.today():
+            raise ValueError('Date of birth cannot be in the future')
+        return v
+
+
 class YouthProfileCreate(YouthProfileBase):
     pass
+
 
 class YouthProfileResponse(YouthProfileBase):
     id: uuid.UUID
@@ -216,15 +311,18 @@ class YouthProfileResponse(YouthProfileBase):
     class Config:
         from_attributes = True
 
+
 class YouthActionPlanBase(BaseModel):
     academic_year: str
     title: str
     target_demographic: str
-    proposed_budget: float
+    proposed_budget: float = Field(..., ge=0.0, description="Budget cannot be negative")
     objectives: str
+
 
 class YouthActionPlanCreate(YouthActionPlanBase):
     pass
+
 
 class YouthActionPlanResponse(YouthActionPlanBase):
     id: uuid.UUID
@@ -237,12 +335,12 @@ class YouthActionPlanResponse(YouthActionPlanBase):
 
 
 # ==============================================================================
-# 4. FINANCES & UMUTULO
+# 4. FINANCES & UMUTULO (STRICT NUMERIC GOVERNANCE)
 # ==============================================================================
 class DiocesanContributionCreate(BaseModel):
     fund_name: str
-    target_amount: Optional[float] = None
-    actual_amount: float
+    target_amount: Optional[float] = Field(default=None, ge=0.0)
+    actual_amount: float = Field(..., ge=0.0)
     notes: Optional[str] = None
 
 
@@ -259,12 +357,11 @@ class GlobalSearchResult(BaseModel):
     parish_name: str
     match_score: float
 
+
 class SearchResponse(BaseModel):
     query: str
     results: List[GlobalSearchResult]
 
-
-from typing import Dict, Any
 
 # ==============================================================================
 # 6. GOVERNANCE & APPROVALS (PENDING ACTIONS)
@@ -276,8 +373,10 @@ class PendingActionBase(BaseModel):
     target_record_id: str
     proposed_payload: Dict[str, Any]
 
+
 class PendingActionCreate(PendingActionBase):
     pass
+
 
 class PendingActionResponse(PendingActionBase):
     id: uuid.UUID
