@@ -18,7 +18,7 @@ def send_system_email(to_email: str, subject: str, html_content: str) -> bool:
     """
     try:
         response = resend.Emails.send({
-            "from": "CDOM System <admin@your-verified-domain.com>",
+            "from": "CDOM System <admin@domansa.org>",
             "to": [to_email],
             "subject": subject,
             "html": html_content
@@ -84,7 +84,7 @@ def send_invitation_email(to_email: str, role: str, invite_token: str) -> bool:
 
     try:
         response = resend.Emails.send({
-            "from": "CDOM Registry <admin@your-verified-domain.com>",
+            "from": "CDOM Registry <admin@domansa.org>",
             "to": [to_email],
             "subject": "Action Required: CDOM Registry Account Setup",
             "html": html_content

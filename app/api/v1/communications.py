@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends, status, HTTPException
+from fastapi import APIRouter, Depends, status, HTTPException, BackgroundTasks
 from pydantic import BaseModel, EmailStr
-from app.core.dependencies import require_read_access
-from app.core.email import send_system_email
 import os
 
-router = APIRouter()
+# Secure internal imports
+from app.core.dependencies import require_read_access
+from app.core.email import send_system_email
+from app.models.all_models import User
 
+router = APIRouter()
 
 # Schema for incoming email requests
 class EmailRequest(BaseModel):
@@ -14,22 +16,24 @@ class EmailRequest(BaseModel):
     body: str = "This is an automated message from the CDOM Management System."
     include_dummy_pdf: bool = False
 
-
+# ==============================================================================
+# 1. DISPATCH SYSTEM EMAIL (BACKGROUND TASK)
+# ==============================================================================
 @router.post("/send", status_code=status.HTTP_200_OK)
 async def dispatch_email(
         email_in: EmailRequest,
-        _current_user: dict = Depends(require_read_access)
+        background_tasks: BackgroundTasks, # <-- Inject the Background Worker
+        _current_user: User = Depends(require_read_access) # Ensure strict User object
 ):
     """
     Dispatches an official system email via the Resend API.
-    Can optionally generate and attach a dummy PDF to verify attachment logic.
+    Offloads the HTTP request to a Background Task to prevent UI latency.
     """
     pdf_path = None
 
-    # Generate a temporary dummy PDF for testing the attachment pipes
+    # Generate a temporary dummy PDF synchronously if requested
     if email_in.include_dummy_pdf:
         pdf_path = "temp_test_certificate.pdf"
-        # We are just writing text into a .pdf extension for rapid testing
         with open(pdf_path, "w") as f:
             f.write("CDOM Official Dummy Certificate.\nReplace this with real Gold Layer PDF generation later.")
 
@@ -47,24 +51,19 @@ async def dispatch_email(
         </div>
         """
 
-        # Dispatch using the engine we built earlier
-        response = send_system_email(
+        # Hand the email dispatch off to the background thread!
+        # The user's screen will not freeze waiting for this to finish.
+        background_tasks.add_task(
+            send_system_email,
             subject=email_in.subject,
             email_to=email_in.email_to,
             html_body=html_content,
             pdf_path=pdf_path
         )
 
-        if response.get("status") == "error":
-            raise HTTPException(status_code=500, detail=response.get("message"))
-
         return {
-            "message": "Email dispatched successfully",
-            "resend_id": response.get("id"),
-            "attached_dummy_pdf": email_in.include_dummy_pdf
+            "message": "Email queued for dispatch successfully.",
+            "status": "Processing in background"
         }
-
-    finally:
-        # The Cleanup: Delete the dummy file so we don't clutter the server
-        if pdf_path and os.path.exists(pdf_path):
-            os.remove(pdf_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

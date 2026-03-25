@@ -1,107 +1,188 @@
-from fastapi import APIRouter, Depends, status, Query
+from fastapi import APIRouter, Depends, status, Query, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, text
+from sqlalchemy import select, func
 from rapidfuzz import process
+import uuid
 
-from app.core.dependencies import get_db, require_create_access, require_read_access
-from app.models.all_models import BaptismModel, GlobalRegistryIndex
+# Secure internal imports
+from app.core.dependencies import (
+    get_db,
+    require_create_access,
+    require_read_access,
+    require_update_access,
+    process_modification_request
+)
+from app.models.all_models import BaptismModel, GlobalRegistryIndex, User
 from app.schemas.schemas import BaptismCreate
 
 router = APIRouter()
 
 
 # ==============================================================================
-# 1. REGISTER BAPTISM (ZERO TRUST ARCHITECTURE)
+# 1. REGISTER BAPTISM (CANONICAL DATA ENTRY)
 # ==============================================================================
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def register_baptism(
         baptism_in: BaptismCreate,
         db: AsyncSession = Depends(get_db),
-        _current_user: dict = Depends(require_create_access)
+        _current_user: User = Depends(require_create_access)  # SECURITY: Must have create privileges
 ):
     """
-    Creates the canonical baptism record.
-    SECURITY: The Parish identity is cryptographically derived from the _current_user
-    token. Any attempts by the client to forge a parish name are ignored.
+    Creates a canonical baptism record.
+    Generates a sequential tracking number and dual-writes to the Local Parish and Global Diocesan Index.
     """
     current_year = baptism_in.date_of_baptism.year
 
-    # Generate Sequential Canonical Number (e.g., 125/2026)
+    # 1. Generate Sequential Canonical Number (e.g., 1/2026)
+    # We query the database to find the highest row number used so far this specific year.
     query = await db.execute(
         select(func.max(BaptismModel.row_number)).where(BaptismModel.registry_year == current_year)
     )
-    new_row = (query.scalar() or 0) + 1
+    max_row = query.scalar() or 0
+    new_row = max_row + 1
     canonical_number = f"{new_row}/{current_year}"
 
-    # 1. Save to the Local Tenant Schema (Parish level)
-    new_bap = BaptismModel(
-        **baptism_in.model_dump(),
-        row_number=new_row,
-        registry_year=current_year,
-        formatted_number=canonical_number
-    )
-    db.add(new_bap)
-    await db.flush()  # Flush to lock the transaction locally
+    try:
+        # 2. Prepare the Primary Baptism Record
+        # We use Pydantic V2's .model_dump() to safely convert the validated schema into a dictionary.
+        new_bap = BaptismModel(
+            **baptism_in.model_dump(),
+            row_number=new_row,
+            registry_year=current_year,
+            formatted_number=canonical_number
+        )
+        db.add(new_bap)
+        await db.flush()  # Flush locks the row and generates the UUID without committing the transaction yet
 
-    # 2. Switch to Public Schema for Global Diocesan Indexing
-    await db.execute(text('SET search_path TO public'))
+        # 3. Global Diocesan Indexing
+        # We copy key identifying data to the public index so the Chancery can search for parishioners diocese-wide.
+        full_first_name = new_bap.first_name
+        if new_bap.middle_name:
+            full_first_name = f"{new_bap.first_name} {new_bap.middle_name}"
 
-    # Build the display name (including the new middle_name if it exists)
-    first_name_display = new_bap.first_name
-    if new_bap.middle_name:
-        first_name_display = f"{new_bap.first_name} {new_bap.middle_name}"
+        global_entry = GlobalRegistryIndex(
+            first_name=full_first_name,
+            last_name=new_bap.last_name,
+            canonical_number=canonical_number,
+            baptism_number=canonical_number,
+            record_type="BAPTISM",
+            parish_id=_current_user.parish_id  # Identity mathematically guaranteed by the JWT
+        )
+        db.add(global_entry)
 
-    global_entry = GlobalRegistryIndex(
-        first_name=first_name_display,
-        last_name=new_bap.last_name,
-        canonical_number=canonical_number,
-        baptism_number=canonical_number,
-        record_type="BAPTISM",
-        parish_id=_current_user["parish_id"]  # Forced by the backend token
-    )
-    db.add(global_entry)
-    await db.commit()
+        # 4. Commit both records simultaneously (Atomic Transaction)
+        await db.commit()
 
-    # 3. Securely revert the search path back to the tenant
-    await db.execute(text(f'SET search_path TO "{_current_user["tenant_schema"]}", public'))
+        return {
+            "message": "Baptism registered successfully.",
+            "canonical_reference": canonical_number,
+            "id": str(new_bap.id)
+        }
 
-    return {
-        "message": "Baptism registered successfully.",
-        "canonical_reference": canonical_number
-    }
+    except Exception as e:
+        await db.rollback()  # If anything fails, revert the entire transaction to prevent corrupted partial data
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database Error: {str(e)}"
+        )
 
 
 # ==============================================================================
-# 2. LOCAL TENANT SEARCH (TYPO-TOLERANT WITH MIDDLE NAMES)
+# 2. LOCAL SEARCH (TYPO-TOLERANT FUZZY SEARCH)
 # ==============================================================================
 @router.get("/search")
 async def search_baptisms(
         q: str = Query(..., min_length=2, description="Search by Name or Canonical Number"),
         db: AsyncSession = Depends(get_db),
-        _current_user: dict = Depends(require_read_access)
+        _current_user: User = Depends(require_read_access)
 ):
-    query = select(BaptismModel)
-    result = await db.execute(query)
+    """
+    Performs an intelligent, fuzzy search within the baptismal registry.
+    Handles spelling mistakes (e.g., finding "Mwaba" even if the user typed "Mwamba").
+    """
+    # Fetch all records to perform fuzzy matching in memory
+    result = await db.execute(select(BaptismModel))
     rows = result.scalars().all()
 
     if not rows:
-        return {"scope": "NONE", "message": "No baptism records found in this parish.", "results": []}
+        return {"results": [], "message": "No records found."}
 
-    search_strings: list[str] = []
-    record_map: list[BaptismModel] = []
+    search_strings = []
+    record_map = []
 
+    # Build the search index strings
     for record in rows:
-        # Include the new middle_name in the fuzzy search algorithm
         middle = record.middle_name if record.middle_name else ""
-        search_str = f"{record.first_name} {middle} {record.last_name} {record.formatted_number} {record.mother_first_name} {record.father_first_name}".lower()
-        search_strings.append(search_str)
+        search_data = f"{record.first_name} {middle} {record.last_name} {record.formatted_number}".lower()
+        search_strings.append(search_data)
         record_map.append(record)
 
-    fuzzy_results = process.extract(q.lower(), search_strings, limit=20, score_cutoff=65.0)
-    formatted_results = [record_map[match_index] for _, _, match_index in fuzzy_results]
+    # Use RapidFuzz to find the best matches with a minimum confidence score of 60%
+    matches = process.extract(q.lower(), search_strings, limit=10, score_cutoff=60.0)
+
+    # Map the fuzzy match indexes back to the actual database objects
+    results = [record_map[idx] for _, _, idx in matches]
+
+    return {"query": q, "match_count": len(results), "results": results}
+
+
+# ==============================================================================
+# 3. UPDATE BAPTISM (GOVERNANCE WORKFLOW)
+# ==============================================================================
+@router.put("/{baptism_id}", status_code=status.HTTP_200_OK)
+async def update_baptism(
+        baptism_id: uuid.UUID,
+        payload: BaptismCreate,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(require_update_access)
+):
+    """
+    Modifies an existing record.
+    Strict Role-Based Access Control (RBAC) applied:
+    - Assistant Priests/Secretaries: Queued for approval (Returns 202).
+    - Parish Priests: Executes immediately (Returns 200).
+    """
+    # 1. Verify the target record actually exists
+    query = select(BaptismModel).where(BaptismModel.id == baptism_id)
+    existing_record = (await db.execute(query)).scalar_one_or_none()
+
+    if not existing_record:
+        raise HTTPException(status_code=404, detail="Baptism record not found.")
+
+    # 2. EXPLICIT SECURITY GATE: The Governance Queue
+    # If the user is NOT a Parish Priest, they cannot modify the database directly.
+    if current_user.role != "Parish Priest":
+        # Save the proposed changes to the Pending Actions Queue as a JSON payload
+        await process_modification_request(
+            db=db,
+            user=current_user,
+            action_type="UPDATE",
+            table_name="baptisms",
+            record_id=str(baptism_id),
+            payload=payload.model_dump(mode='json')  # mode='json' converts dates to strings for JSONB storage
+        )
+
+        # SECURITY FIX: Forcefully halt execution here and return a 202 Accepted.
+        # This guarantees the code below this block is never reached by an Assistant Priest.
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content={
+                "message": "Modification queued. Awaiting Parish Priest approval.",
+                "canonical_reference": existing_record.formatted_number
+            }
+        )
+
+    # 3. PARISH PRIEST EXECUTION (Direct Update)
+    # The execution flow will ONLY reach this line if the user is a Parish Priest.
+    update_data = payload.model_dump(exclude_unset=True)
+
+    for key, value in update_data.items():
+        setattr(existing_record, key, value)
+
+    await db.commit()
 
     return {
-        "scope": "LOCAL",
-        "message": f"Found {len(formatted_results)} intelligent matches for '{q}'.",
-        "results": formatted_results
+        "message": "Baptism record updated successfully.",
+        "canonical_reference": existing_record.formatted_number
     }

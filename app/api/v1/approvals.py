@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import uuid
+from datetime import date  # <--- ADDED: Required for JSON-to-Date parsing
 
-# Security: Granular RBAC for Secretaries and Priests
-from app.core.dependencies import get_db, require_parish_priest, require_create_access
+# Security & Core
+from app.core.dependencies import get_db, require_parish_priest
 from app.models.all_models import (
     PendingActionModel,
     BaptismModel,
@@ -12,16 +13,16 @@ from app.models.all_models import (
     FirstCommunionModel,
     MarriageModel,
     DeathRegisterModel,
-    AuditLogModel
+    AuditLogModel,
+    User
 )
-from app.schemas.schemas import PendingActionCreate
 
 router = APIRouter()
 
 # ==============================================================================
 # DYNAMIC TABLE MAPPING
-# ==============================================================================
 # Maps the string name in the database to the actual SQLAlchemy Python Class
+# ==============================================================================
 TABLE_MAP = {
     "baptisms": BaptismModel,
     "confirmations": ConfirmationModel,
@@ -32,44 +33,14 @@ TABLE_MAP = {
 
 
 # ==============================================================================
-# 1. SUBMIT PENDING ACTION (THE SECRETARY'S OUTBOX)
+# 1. VIEW PENDING ACTIONS (THE PRIEST'S INBOX)
 # ==============================================================================
-@router.post("/submit", status_code=status.HTTP_201_CREATED)
-async def submit_pending_action(
-        action_in: PendingActionCreate,
-        db: AsyncSession = Depends(get_db),
-        _current_user: dict = Depends(require_create_access)  # Secretary uses this
-):
-    """Allows a Parish Secretary to submit a proposed edit to a canonical record."""
-    new_action = PendingActionModel(
-        action_type=action_in.action_type,
-        target_table=action_in.target_table,
-        target_record_id=action_in.target_record_id,
-        proposed_payload=action_in.proposed_payload,
-        status="PENDING",
-        requested_by=_current_user["email"]
-    )
-
-    db.add(new_action)
-    await db.commit()
-    await db.refresh(new_action)
-
-    return {
-        "message": "Edit submitted successfully. Awaiting Parish Priest approval.",
-        "action_id": new_action.id
-    }
-
-
-# ==============================================================================
-# 2. VIEW PENDING ACTIONS (THE PRIEST'S INBOX)
-# ==============================================================================
-@router.get("/")
+@router.get("/pending", status_code=status.HTTP_200_OK)
 async def get_pending_actions(
         db: AsyncSession = Depends(get_db),
-        _current_user: dict = Depends(require_parish_priest)
+        _current_pp: User = Depends(require_parish_priest)  # SECURITY: Object-based access
 ):
     """Fetches all actions awaiting the Parish Priest's approval."""
-
     query = select(PendingActionModel).where(PendingActionModel.status == "PENDING").order_by(
         PendingActionModel.created_at.desc())
     results = (await db.execute(query)).scalars().all()
@@ -81,13 +52,13 @@ async def get_pending_actions(
 
 
 # ==============================================================================
-# 3. APPROVE ACTION (WITH AUDIT LOGGING)
+# 2. APPROVE ACTION (WITH COMPREHENSIVE AUDIT LOGGING)
 # ==============================================================================
-@router.post("/{action_id}/approve")
+@router.post("/{action_id}/approve", status_code=status.HTTP_200_OK)
 async def approve_action(
         action_id: uuid.UUID,
         db: AsyncSession = Depends(get_db),
-        _current_user: dict = Depends(require_parish_priest)
+        current_pp: User = Depends(require_parish_priest)
 ):
     """Approves an edit, applies the payload, and permanently writes to the Audit Ledger."""
 
@@ -119,16 +90,24 @@ async def approve_action(
     old_values = {}
     for key in action.proposed_payload.keys():
         if hasattr(target_record, key):
-            # Grab the current database value before we overwrite it
             old_value = getattr(target_record, key)
             # Convert dates to strings for JSON serialization
             if hasattr(old_value, "isoformat"):
                 old_value = old_value.isoformat()
-            old_values[key] = old_value
+            old_values[key] = str(old_value) if old_value is not None else None  # Safe stringification
 
     # 5. Dynamically apply the new JSON payload to the Canonical Record
     for key, value in action.proposed_payload.items():
         if hasattr(target_record, key):
+
+            # THE FIX: If the value is a string that looks like a date (YYYY-MM-DD),
+            # safely convert it back to a Python date object so PostgreSQL accepts it.
+            if isinstance(value, str) and len(value) == 10 and value.count("-") == 2:
+                try:
+                    value = date.fromisoformat(value)
+                except ValueError:
+                    pass  # If it fails to parse, just leave it as a string
+
             setattr(target_record, key, value)
 
     # 6. WRITE TO THE AUDIT LEDGER
@@ -136,7 +115,7 @@ async def approve_action(
         action_type=action.action_type,
         target_table=action.target_table,
         target_record_id=str(target_record.id),
-        changed_by_email=_current_user["email"],
+        changed_by_email=current_pp.email,  # Type-safe object access
         old_values=old_values,
         new_values=action.proposed_payload
     )
@@ -144,7 +123,6 @@ async def approve_action(
 
     # 7. Update the Action Status
     action.status = "APPROVED"
-    action.reviewed_by = _current_user["email"]
 
     await db.commit()
 
@@ -155,16 +133,15 @@ async def approve_action(
 
 
 # ==============================================================================
-# 4. REJECT ACTION
+# 3. REJECT ACTION
 # ==============================================================================
-@router.post("/{action_id}/reject")
+@router.post("/{action_id}/reject", status_code=status.HTTP_200_OK)
 async def reject_action(
         action_id: uuid.UUID,
         db: AsyncSession = Depends(get_db),
-        _current_user: dict = Depends(require_parish_priest)
+        _current_pp: User = Depends(require_parish_priest)
 ):
     """Rejects an edit. The canonical record remains untouched."""
-
     action_query = await db.execute(select(PendingActionModel).where(PendingActionModel.id == action_id))
     action = action_query.scalar_one_or_none()
 
@@ -172,8 +149,6 @@ async def reject_action(
         raise HTTPException(status_code=404, detail="Action not found or already processed.")
 
     action.status = "REJECTED"
-    action.reviewed_by = _current_user["email"]
 
     await db.commit()
-
     return {"message": "Action has been rejected and archived."}

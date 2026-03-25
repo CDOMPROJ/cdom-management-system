@@ -2,34 +2,46 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 
-# ==========================================
+# ==============================================================================
 # 1. ROUTER IMPORTS
-# ==========================================
+# ==============================================================================
 from app.api.v1 import (
-    bishop,
+    # Identity & Access Management
     auth,
-    admin,
     users,
+
+    # Executive & Administration
+    bishop,
+    quinquennial_vatican_report,
+    deanery,
     audit,
+    approvals,
+
+    # Core Data & Analytics
+    analytics,
+    search,
+
+    # Sacramental Registers
     baptisms,
     first_communions,
     confirmations,
     marriages,
     death_register,
-    analytics,
-    search,
-    approvals,
+
+    # Financial Engine
     finances,
-    umutulo,
-    certificates,
+
+    # Pastoral Care
     youth_ministry,
+
+    # Utilities
+    certificates,
     communications
 )
 
-# ==========================================
+# ==============================================================================
 # 2. APP INITIALIZATION
-# ==========================================
-# We use settings.PROJECT_NAME which pulls securely from your .env file via config.py
+# ==============================================================================
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="Enterprise Management System for the Catholic Diocese of Mansa (CDOM)",
@@ -38,57 +50,59 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# ==========================================
+# ==============================================================================
 # 3. CORS MIDDLEWARE
-# ==========================================
-# Essential for allowing Flutter (or Web Frontends) to communicate with this API
+# ==============================================================================
+# Essential for allowing external frontends (React/Flutter) to communicate securely
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace "*" with your app's specific domain/IP
+    allow_origins=["*"],  # TODO: Restrict to specific domains in production
     allow_credentials=True,
     allow_methods=["*"],  # Allows GET, POST, PUT, DELETE, etc.
     allow_headers=["*"],  # Allows all headers (like Authorization: Bearer)
 )
 
-# ==========================================
-# 4. ROUTER REGISTRATION
-# ==========================================
+# ==============================================================================
+# 4. ROUTER REGISTRATION (ARCHITECTURAL TIERS)
+# ==============================================================================
 
-# SECTION 1: Identity & Access Management (IAM)
+# --- TIER 1: Identity & Access Management (IAM) ---
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["1.0 Authentication & IAM"])
-app.include_router(users.router, prefix="/api/v1/users", tags=["Users & Provisioning"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["1.1 Users & Provisioning"])
 
-# SECTION 2: Executive Oversight
-app.include_router(admin.router, prefix="/api/v1/admin", tags=["2.0 Bishop's Dashboard"])
-app.include_router(bishop.router, prefix="/api/v1/bishop", tags=["Bishop Executive Dashboard"])
-app.include_router(audit.router, prefix="/api/v1/audit", tags=["2.2 Governance & Audit Trail"])
-app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["4.0 The Gold Layer"])
+# --- TIER 2: Executive Oversight & Governance ---
+app.include_router(bishop.router, prefix="/api/v1/bishop", tags=["2.0 Executive: Bishop's Dashboard"])
+app.include_router(quinquennial_vatican_report.router, prefix="/api/v1/admin", tags=["2.1 Executive: System Admin"])
+app.include_router(deanery.router, prefix="/api/v1/deanery", tags=["2.2 Executive: Deanery Management"])
+app.include_router(approvals.router, prefix="/api/v1/approvals", tags=["2.3 Governance: Pending Approvals"])
+app.include_router(audit.router, prefix="/api/v1/audit", tags=["2.4 Governance: Immutable Audit Trail"])
 
-# SECTION 3 & 4 & 5: Sacramental Registers (Parish Level)
-app.include_router(search.router, prefix="/api/v1/search", tags=["3.0 Intelligence Layer"])
+# --- TIER 3: The Canonical Sacramental Registers ---
 app.include_router(baptisms.router, prefix="/api/v1/baptisms", tags=["3.0 Register: Baptisms"])
-app.include_router(first_communions.router, prefix="/api/v1/first-communions", tags=["3.1 Register: First Communion"])
+app.include_router(first_communions.router, prefix="/api/v1/first-communions", tags=["3.1 Register: First Communions"])
 app.include_router(confirmations.router, prefix="/api/v1/confirmations", tags=["3.2 Register: Confirmations"])
-app.include_router(marriages.router, prefix="/api/v1/marriages", tags=["4.0 Register: Marriages"])
-app.include_router(death_register.router, prefix="/api/v1/deaths", tags=["5.0 Register: Liber Defunctorum (Deaths)"])
-app.include_router(approvals.router, prefix="/api/v1/approvals", tags=["2.1 Governance & Approvals"])
+app.include_router(marriages.router, prefix="/api/v1/marriages", tags=["3.3 Register: Holy Matrimony"])
+app.include_router(death_register.router, prefix="/api/v1/deaths", tags=["3.4 Register: Liber Defunctorum (Deaths)"])
 
-# SECTION 6: Financial Management
-app.include_router(finances.router, prefix="/api/v1/finances", tags=["6.0 Parish Ledger"])
-app.include_router(umutulo.router, prefix="/api/v1/umutulo", tags=["6.1 CDOM Obligations (Umutulo)"])
+# --- TIER 4: Financial Management ---
+app.include_router(finances.router, prefix="/api/v1/finances", tags=["4.0 Finance: Parish Ledger"])
 
-# SECTION 7: Official Documents
-app.include_router(certificates.router, prefix="/api/v1/print", tags=["7.0 Official Certificates"])
+# --- TIER 5: Pastoral Care & Formation ---
+app.include_router(youth_ministry.router, prefix="/api/v1/youth", tags=["5.0 Pastoral: Youth Ministry & Catechesis"])
 
-# SECTION 8: Pastoral Care & Formation
-app.include_router(youth_ministry.router, prefix="/api/v1/youth", tags=["8.0 Youth Ministry & Catechesis"])
+# --- TIER 6: Intelligence & Data Warehouse ---
+app.include_router(search.router, prefix="/api/v1/search", tags=["6.0 Intelligence: Global Search"])
+app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["6.1 Intelligence: The Gold Layer (Analytics)"])
 
-# SECTION 9: System Communications
-app.include_router(communications.router, prefix="/api/v1/communications", tags=["9.0 Email & Communications"])
+# --- TIER 7: System Utilities & Output ---
+app.include_router(certificates.router, prefix="/api/v1/print", tags=["7.0 Utilities: Official Certificates (PDF)"])
+app.include_router(communications.router, prefix="/api/v1/communications",
+                   tags=["7.1 Utilities: Email & Notifications"])
 
-# ==========================================
+
+# ==============================================================================
 # 5. SYSTEM HEALTH CHECK
-# ==========================================
+# ==============================================================================
 @app.get("/", tags=["System Status"])
 async def root():
     """Returns the current operational status of the CDOM backend."""
@@ -96,5 +110,5 @@ async def root():
         "system": settings.PROJECT_NAME,
         "status": "Online",
         "version": "1.3.0",
-        "message": "Welcome to the Catholic Diocese of Mansa Management System."
+        "message": "Welcome to the Catholic Diocese of Mansa Management System API."
     }

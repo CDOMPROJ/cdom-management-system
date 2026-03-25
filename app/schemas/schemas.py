@@ -22,6 +22,37 @@ class ReligionCategory(str, enum.Enum):
 
 
 # ==============================================================================
+# 0. EXECUTIVE GEOGRAPHY (DEANERIES & PARISHES)
+# ==============================================================================
+class DeaneryBase(BaseModel):
+    name: str
+
+class DeaneryCreate(DeaneryBase):
+    pass
+
+class DeaneryResponse(DeaneryBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+class ParishBase(BaseModel):
+    name: str
+    deanery_id: int
+    schema_name: str
+
+class ParishCreate(ParishBase):
+    pass
+
+class ParishResponse(ParishBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+
+# ==============================================================================
 # 1. AUTHENTICATION, USERS & MFA
 # ==============================================================================
 class LoginRequest(BaseModel):
@@ -164,17 +195,19 @@ class MarriageBase(BaseModel):
     bride_christian_denomination: Optional[str] = None
     bride_non_christian_religion: Optional[str] = None
 
-    date_of_marriage: date
+    marriage_date: date
     center: Optional[str] = None
     minister: str
     witness_1: str
     witness_2: str
     notes: Optional[str] = None
+    banns_published_on: Optional[date] = None
+    dispensation_from_impediment: Optional[str] = None
 
-    @field_validator('groom_dob', 'bride_dob', 'date_of_marriage')
+    @field_validator('groom_dob', 'bride_dob', 'marriage_date', 'banns_published_on')
     @classmethod
-    def dates_cannot_be_in_future(cls, v: date) -> date:
-        if v > date.today():
+    def dates_cannot_be_in_future(cls, v: Optional[date]) -> Optional[date]:
+        if v and v > date.today():
             raise ValueError('Date cannot be in the future')
         return v
 
@@ -193,13 +226,19 @@ class MarriageResponse(MarriageBase):
 
 class FirstCommunionBase(BaseModel):
     first_name: str
+    middle_name: Optional[str] = None
     last_name: str
+    father_first_name: str
+    father_last_name: str
+    mother_first_name: str
+    mother_last_name: str
     baptism_number: str
-    date_of_communion: date
+    baptised_at: str
+    communion_date: date
     minister: str
-    place_of_baptism: str
+    place_of_communion: str
 
-    @field_validator('date_of_communion')
+    @field_validator('communion_date')
     @classmethod
     def dates_cannot_be_in_future(cls, v: date) -> date:
         if v > date.today():
@@ -221,28 +260,35 @@ class FirstCommunionResponse(FirstCommunionBase):
 
 class ConfirmationBase(BaseModel):
     first_name: str
+    middle_name: Optional[str] = None
     last_name: str
+    dob: date
+    father_first_name: str
+    father_last_name: str
+    mother_first_name: str
+    mother_last_name: str
     baptism_number: str
-    date_of_confirmation: date
-    sponsor_name: str
+    baptised_at: str
+    confirmation_date: date
     minister: str
-    place_of_baptism: str
+    place_of_confirmation: str
+    god_parent: str
+    god_parent_is_baptised: bool
+    god_parent_is_confirmed: bool
 
-    @field_validator('date_of_confirmation')
+    @field_validator('dob', 'confirmation_date')
     @classmethod
     def dates_cannot_be_in_future(cls, v: date) -> date:
         if v > date.today():
             raise ValueError('Date cannot be in the future')
         return v
 
-
 class ConfirmationCreate(ConfirmationBase):
     pass
 
-
 class ConfirmationResponse(ConfirmationBase):
     id: uuid.UUID
-    canonical_number: str
+    formatted_number: str # Matches DB column
 
     class Config:
         from_attributes = True
@@ -281,17 +327,19 @@ class DeathRegisterResponse(DeathRegisterBase):
 
 
 # ==============================================================================
-# 3. YOUTH MINISTRY
+# 3. YOUTH MINISTRY & CHILD ANIMATION
 # ==============================================================================
 class YouthProfileBase(BaseModel):
     first_name: str
     last_name: str
     dob: date
-    gender: str
-    village: str
-    center: str
+    parent_guardian_name: str
+    contact_number: Optional[str] = None
+    village_center: str
     is_baptised: bool = False
     is_communicant: bool = False
+    is_confirmed: bool = False
+    canonical_baptism_number: Optional[str] = None
 
     @field_validator('dob')
     @classmethod
@@ -300,20 +348,37 @@ class YouthProfileBase(BaseModel):
             raise ValueError('Date of birth cannot be in the future')
         return v
 
-
 class YouthProfileCreate(YouthProfileBase):
     pass
 
-
 class YouthProfileResponse(YouthProfileBase):
     id: uuid.UUID
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CommunicationBase(BaseModel):
+    sender_email: str
+    sender_role: str
+    recipient_email: str
+    recipient_role: str
+    action_taken: str
+    comments: Optional[str] = None
+
+
+class CommunicationResponse(CommunicationBase):
+    id: uuid.UUID
+    plan_id: uuid.UUID
+    created_at: datetime
 
     class Config:
         from_attributes = True
 
 
 class YouthActionPlanBase(BaseModel):
-    academic_year: str
+    academic_year: int
     title: str
     target_demographic: str
     proposed_budget: float = Field(..., ge=0.0, description="Budget cannot be negative")
@@ -329,6 +394,11 @@ class YouthActionPlanResponse(YouthActionPlanBase):
     status: str
     created_by: str
     pp_feedback: Optional[str] = None
+    created_at: datetime
+
+    # By including this list, the frontend will automatically receive the
+    # entire "Email Thread" history every time it fetches an Action Plan!
+    communications: List[CommunicationResponse] = []
 
     class Config:
         from_attributes = True
@@ -337,11 +407,53 @@ class YouthActionPlanResponse(YouthActionPlanBase):
 # ==============================================================================
 # 4. FINANCES & UMUTULO (STRICT NUMERIC GOVERNANCE)
 # ==============================================================================
-class DiocesanContributionCreate(BaseModel):
-    fund_name: str
-    target_amount: Optional[float] = Field(default=None, ge=0.0)
-    actual_amount: float = Field(..., ge=0.0)
+class FinanceBase(BaseModel):
+    transaction_date: date
+    transaction_type: str  # 'Income' or 'Expense'
+    category: str
+    amount: float = Field(..., gt=0.0, description="Amount must be greater than zero")
     notes: Optional[str] = None
+
+    @field_validator('transaction_date')
+    @classmethod
+    def date_cannot_be_in_future(cls, v: date) -> date:
+        if v > date.today():
+            raise ValueError('Transaction date cannot be in the future')
+        return v
+
+
+class FinanceCreate(FinanceBase):
+    pass
+
+
+class FinanceResponse(FinanceBase):
+    id: uuid.UUID
+    recorded_by: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DiocesanContributionUpdate(BaseModel):
+    """Used when the parish makes a payment towards their assessment."""
+    payment_amount: float = Field(..., gt=0.0)
+    payment_date: date
+    notes: Optional[str] = None
+
+
+class DiocesanContributionResponse(BaseModel):
+    id: uuid.UUID
+    reporting_year: int
+    fund_name: str
+    fund_type: str
+    target_amount: Optional[float]
+    actual_amount_paid: float
+    variance_amount: Optional[float]
+    last_payment_date: Optional[date]
+
+    class Config:
+        from_attributes = True
 
 
 # ==============================================================================
