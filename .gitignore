@@ -2,7 +2,7 @@
 .venv/
 venv/
 env/
-
+alembic/
 # Cache and Compiled Files
 __pycache__/
 *.pyc
@@ -10,6 +10,7 @@ __pycache__/
 
 # Environment Variables & Secrets
 .env
+alembic.ini
 
 # PyCharm/IDE Settings
 .idea/

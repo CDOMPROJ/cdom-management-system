@@ -94,3 +94,27 @@ def send_invitation_email(to_email: str, role: str, invite_token: str) -> bool:
     except Exception as e:
         logger.error(f"Failed to send email to {to_email}: {str(e)}")
         return False
+
+
+def send_password_reset_email(email_to: str, reset_url: str):
+    """Dispatches the password reset link via Resend."""
+    try:
+        html_content = f"""
+        <div style="font-family: Arial, sans-serif; color: #333;">
+            <h2 style="color: #2c3e50;">Password Reset Request</h2>
+            <p>We received a request to reset the password for your CDOM account.</p>
+            <p>Click the link below to set a new password. This link will expire in 1 hour.</p>
+            <a href="{reset_url}" style="display: inline-block; padding: 10px 20px; background-color: #0044cc; color: #fff; text-decoration: none; border-radius: 5px;">Reset Password</a>
+            <p>If you did not request this, please ignore this email.</p>
+        </div>
+        """
+        response = resend.Emails.send({
+            "from": "CDOM System <system@domansa.org>", # Change to your verified domain
+            "to": email_to,
+            "subject": "CDOM Password Reset",
+            "html": html_content
+        })
+        return {"status": "success", "id": response.get("id")}
+    except Exception as e:
+        print(f"Failed to send reset email: {e}")
+        return {"status": "error", "message": str(e)}

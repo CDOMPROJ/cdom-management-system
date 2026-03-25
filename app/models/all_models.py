@@ -88,9 +88,12 @@ class User(Base):
     role = Column(String, nullable=False)
     office = Column(String, nullable=False)
 
+
     # INDEXES ADDED: Speeds up RBAC and geographical authorization
     parish_id = Column(Integer, ForeignKey("parishes.id", ondelete="SET NULL"), nullable=True, index=True)
     deanery_id = Column(Integer, ForeignKey("deaneries.id", ondelete="SET NULL"), nullable=True, index=True)
+    reset_token = Column(String, unique=True, index=True, nullable=True)
+    reset_token_expires = Column(DateTime(timezone=True), nullable=True)
 
     mfa_enabled = Column(Boolean, default=False)
     mfa_secret = Column(String, nullable=True)
