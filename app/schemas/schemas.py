@@ -143,6 +143,18 @@ class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str = Field(..., min_length=8, description="Must be at least 8 characters")
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8, description="Must be at least 8 characters")
+
+class DirectUserCreateRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+    role: str
+    office: str
+    parish_id: int | None = None
+    deanery_id: int | None = None
+
 
 # ==============================================================================
 # 2. SACRAMENTAL REGISTERS (WITH DATE GOVERNANCE)

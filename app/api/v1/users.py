@@ -11,7 +11,7 @@ from app.core.email import send_invitation_email
 
 # Database Models and Pydantic Schemas
 from app.models.all_models import User, UserInvitationModel
-from app.schemas.schemas import UserInviteRequest, UserSetupRequest
+from app.schemas.schemas import UserInviteRequest, UserSetupRequest, DirectUserCreateRequest
 
 router = APIRouter()
 
@@ -90,3 +90,41 @@ async def delete_user(
     await db.commit()
 
     return {"message": f"Account {email} has been successfully deactivated."}
+
+
+# ==============================================================================
+# 1.5. SYSADMIN: DIRECT ACCOUNT CREATION (DEV / FAST PROVISIONING)
+# ==============================================================================
+@router.post("/", status_code=status.HTTP_201_CREATED)
+async def create_user_directly(
+        request: DirectUserCreateRequest,
+        db: AsyncSession = Depends(get_db),
+        _sysadmin: User = Depends(require_sysadmin_access)  # SECURITY: Must be SysAdmin
+):
+    """
+    Directly creates an active user without the email invitation flow.
+    Perfect for initial system provisioning or local development.
+    """
+    # Check if user exists
+    query = select(User).where(User.email == request.email)
+    existing_user = (await db.execute(query)).scalar_one_or_none()
+
+    if existing_user:
+        raise HTTPException(status_code=400, detail="User already exists.")
+
+    # Create the user directly
+    new_user = User(
+        email=request.email,
+        password_hash=get_password_hash(request.password),
+        role=request.role,
+        office=request.office,
+        parish_id=request.parish_id,
+        deanery_id=request.deanery_id,
+        is_active=True
+    )
+
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+
+    return {"message": f"Account for {request.email} created and activated successfully."}
