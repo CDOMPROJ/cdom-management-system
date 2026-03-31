@@ -3,6 +3,8 @@
 venv/
 env/
 alembic/
+testing/
+scripts/
 # Cache and Compiled Files
 __pycache__/
 *.pyc
