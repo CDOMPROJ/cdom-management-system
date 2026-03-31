@@ -3,8 +3,6 @@
 venv/
 env/
 alembic/
-testing/
-scripts/
 # Cache and Compiled Files
 __pycache__/
 *.pyc
@@ -21,3 +19,5 @@ alembic.ini
 # Generated Output Tests
 *.pdf
 testing/*.pdf
+/testing/
+/scripts/
