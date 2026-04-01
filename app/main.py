@@ -72,7 +72,7 @@ app.include_router(users.router, prefix="/api/v1/users", tags=["1.1 Users & Prov
 
 # --- TIER 2: Executive Oversight & Governance ---
 app.include_router(bishop.router, prefix="/api/v1/bishop", tags=["2.0 Executive: Bishop's Dashboard"])
-app.include_router(quinquennial_vatican_report.router, prefix="/api/v1/admin", tags=["2.1 Executive: System Admin"])
+app.include_router(quinquennial_vatican_report.router, prefix="/api/v1/bishop", tags=["2.0 Executive: Bishop's Dashboard"])
 app.include_router(deanery.router, prefix="/api/v1/deanery", tags=["2.2 Executive: Deanery Management"])
 app.include_router(approvals.router, prefix="/api/v1/approvals", tags=["2.3 Governance: Pending Approvals"])
 app.include_router(audit.router, prefix="/api/v1/audit", tags=["2.4 Governance: Immutable Audit Trail"])
