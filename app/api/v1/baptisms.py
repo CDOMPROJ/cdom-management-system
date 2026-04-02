@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, status, Query, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, desc
 from rapidfuzz import process
 import uuid
+from typing import Any, Dict
 
 # Secure internal imports
 from app.core.dependencies import (
@@ -22,6 +23,18 @@ router = APIRouter()
 # ==============================================================================
 # 1. REGISTER BAPTISM (CANONICAL DATA ENTRY)
 # ==============================================================================
+
+@router.get("/", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
+async def get_recent_baptisms(
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(BaptismModel).order_by(desc(BaptismModel.date_of_baptism)).offset(offset).limit(limit)
+    result = await db.execute(query)
+    records = result.scalars().all()
+    return {"count": len(records), "results": records}
+
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def register_baptism(
         baptism_in: BaptismCreate,

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # External APIs
     # Using Optional/default so the server doesn't crash if you haven't put a real key in .env yet
-    RESEND_API_KEY: Optional[str] = "dummy_key_for_development"
+    RESEND_API_KEY: Optional[str] = "re_f3FomECj_83AbckvFY6RqEY2ZRL2C7yu7"
 
     # Security defaults
     ALGORITHM: str = "HS256"
