@@ -10,6 +10,12 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 
+from app.core.dependencies import get_db, require_bishop_access
+from app.models.all_models import DiocesanAnalyticsModel, ParishModel, DeaneryModel, User, ClergyRegistryModel
+from app.schemas.clergy_registry import ClergyRegistryCreate, ClergyRegistryResponse
+
+# Novel ML Intelligence Engine
+from app.ml.vocation_forecaster import generate_intelligence_horizon
 # Secure internal imports (NOW USING require_bishop_access!)
 from app.core.dependencies import get_db, require_bishop_access
 from app.models.all_models import DiocesanAnalyticsModel, ParishModel, DeaneryModel, User
@@ -222,3 +228,113 @@ async def get_financial_forecast(
         return forecast
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ML Forecasting Error: {str(e)}")
+
+    # ==============================================================================
+    # NEW: BISHOP-ONLY CLERGY & RELIGIOUS REGISTRY
+    # ==============================================================================
+    @router.get("/clergy-registry", response_model=list[ClergyRegistryResponse])
+    async def get_clergy_registry(
+            db: AsyncSession = Depends(get_db),
+            _bishop: User = Depends(require_bishop_access)
+    ):
+        """Bishop-only view of summary clergy & religious status."""
+        result = await db.execute(select(ClergyRegistryModel))
+        return result.scalars().all()
+
+    @router.post("/clergy-registry", response_model=ClergyRegistryResponse)
+    async def create_clergy_entry(
+            payload: ClergyRegistryCreate,
+            db: AsyncSession = Depends(get_db),
+            _bishop: User = Depends(require_bishop_access)
+    ):
+        """Bishop-only creation of summary registry entry."""
+        new_entry = ClergyRegistryModel(**payload.model_dump(), updated_by=_bishop.email)
+        db.add(new_entry)
+        await db.commit()
+        await db.refresh(new_entry)
+        return new_entry
+
+    # ==============================================================================
+    # NEW: NOVEL ML INTELLIGENCE HORIZON (Random Forest + Prophet)
+    # ==============================================================================
+    @router.get("/intelligence-horizon")
+    async def get_intelligence_horizon(
+            db: AsyncSession = Depends(get_db),
+            _bishop: User = Depends(require_bishop_access)
+    ):
+        """Bishop-only dashboard card – combines Random Forest risk prediction
+        and Prophet seasonal forecasting using the new registry + existing data."""
+        horizon = await generate_intelligence_horizon(db)
+        return horizon
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from datetime import datetime, timezone
+from typing import Dict, Any
+
+from app.core.dependencies import get_db, require_bishop_access
+from app.models.all_models import User, DiocesanAnalyticsModel, GlobalRegistryIndex, ClergyRegistryModel
+from app.ml.vocation_forecaster import generate_intelligence_horizon
+
+router = APIRouter()
+
+@router.get("/intelligence-horizon", response_model=Dict[str, Any])
+async def get_intelligence_horizon(
+        db: AsyncSession = Depends(get_db),
+        _bishop: User = Depends(require_bishop_access)
+):
+    """
+    REVISED BISHOP-ONLY INTELLIGENCE HORIZON DASHBOARD CARD
+    Forecast visualization is now clean, chart-ready, and includes yearly data,
+    predicted values, confidence bands, growth rates, and trend direction.
+    """
+    now = datetime.now(timezone.utc)
+
+    # Registry Status Summary
+    registry_query = await db.execute(
+        select(
+            ClergyRegistryModel.category,
+            ClergyRegistryModel.status,
+            func.count(ClergyRegistryModel.id).label("count")
+        )
+        .group_by(ClergyRegistryModel.category, ClergyRegistryModel.status)
+    )
+    registry_data = registry_query.all()
+
+    registry_summary = {}
+    for category, status, count in registry_data:
+        if category not in registry_summary:
+            registry_summary[category] = {}
+        registry_summary[category][status] = int(count)
+
+    # ML Predictions with Revised Forecast Visualization
+    ml_horizon = await generate_intelligence_horizon(db)
+
+    # Diocesan Aggregates
+    aggregates_query = await db.execute(
+        select(
+            func.sum(DiocesanAnalyticsModel.total_baptisms_ytd).label("total_baptisms"),
+            func.sum(DiocesanAnalyticsModel.total_marriages_ytd).label("total_marriages")
+        )
+    )
+    aggregates = aggregates_query.one_or_none() or (0, 0)
+
+    return {
+        "card_title": "Intelligence Horizon – Bishop Only",
+        "last_updated": now.isoformat(),
+        "overview": {
+            "total_active_clergy": sum(v.get("Active", 0) for v in registry_summary.values()),
+            "total_parishes_covered": len(registry_summary.get("Diocesan Priest", {})) + len(registry_summary.get("Religious Priest", {}))
+        },
+        "registry_summary": registry_summary,
+        "risk_assessment": ml_horizon.get("risk_parishes", []),
+        "five_year_forecast": ml_horizon.get("five_year_forecast", []),
+        "diocesan_aggregates": {
+            "total_baptisms_ytd": int(aggregates[0] or 0),
+            "total_marriages_ytd": int(aggregates[1] or 0)
+        },
+        "actionable_insights": ml_horizon.get("recommended_actions", [
+            "Prioritize reinforcement in high-risk parishes",
+            "Monitor declining baptism trends in affected congregations"
+        ])
+    }

@@ -21,6 +21,38 @@ class TransactionType(str, enum.Enum):
     INCOME = "Income"
     EXPENSE = "Expense"
 
+class ClergyStatus(str, enum.Enum):
+    ACTIVE = "Active"
+    INACTIVE = "Inactive"
+    SUSPENDED = "Suspended"
+    OUTSIDE_DIOCESE = "Outside Diocese"
+    STUDYING = "Studying"
+
+class ClergyRegistryModel(Base):
+    """Bishop-exclusive summary registry – NO sensitive personal data.
+    Tracks only canonical status for priests, sisters, and brothers.
+    Deacons and seminarians are explicitly excluded per CDOM policy."""
+    __tablename__ = "clergy_registry"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Link to existing User table for login correlation (never exposed)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Summary fields only
+    category = Column(String, nullable=False, index=True)  # "Diocesan Priest", "Religious Priest", "Sister", "Brother"
+    congregation = Column(String, nullable=False, index=True)  # e.g., "Salesians", "Franciscans", "Sisters of Charity"
+    status = Column(String, nullable=False, index=True)  # Uses ClergyStatus enum values
+    current_location = Column(String, nullable=True)  # "Inside Diocese", "Outside Diocese", "Studying Abroad"
+    ministry_category = Column(String, nullable=True)  # "Parish", "Deanery", "Curia", "Formation", "Retired"
+    last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Bishop-only audit
+    updated_by = Column(String, nullable=False)
+
+    __table_args__ = (
+        # Ensure only Bishop can see/edit – enforced in router
+    )
+
 
 class IncomeCategory(str, enum.Enum):
     ICISUMINO_CANDI = "Icisumino Candi"
