@@ -1,28 +1,36 @@
 import asyncio
-from logging.config import fileConfig
 import os
 import sys
+from logging.config import fileConfig
 
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
-from alembic import context
 
-# 1. Add your backend directory to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'backend')))
+# ==================== FORCE CORRECT ALEMBIC IMPORT (fixes IDE shadowing) ====================
+import alembic  # explicit import first to prevent folder shadowing
+from alembic import context  # type: ignore  # IDE warning silenced
 
-# 2. Import your declarative Base from your models file
+# ==================== PATH SETUP (exact match to original repo structure) ====================
+# The original repo uses a 'backend' subfolder — we keep the exact path they used
+sys.path.append(
+    os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "backend")
+    )
+)
+
+# Import the declarative Base (exact match to live repo)
 from app.models.all_models import Base
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
+# this is the Alembic Config object
 config = context.config
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# 3. OVERRIDE target_metadata
+# target metadata for autogenerate
 target_metadata = Base.metadata
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
@@ -37,10 +45,13 @@ def run_migrations_offline() -> None:
     with context.begin_transaction():
         context.run_migrations()
 
+
 def do_run_migrations(connection):
     context.configure(connection=connection, target_metadata=target_metadata)
+
     with context.begin_transaction():
         context.run_migrations()
+
 
 async def run_async_migrations() -> None:
     """In this scenario we need to create an AsyncEngine
@@ -56,9 +67,11 @@ async def run_async_migrations() -> None:
 
     await connectable.dispose()
 
+
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
     asyncio.run(run_async_migrations())
+
 
 if context.is_offline_mode():
     run_migrations_offline()

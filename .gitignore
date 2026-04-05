@@ -2,8 +2,7 @@
 .venv/
 venv/
 env/
-alembic/
-testing
+
 # Cache and Compiled Files
 __pycache__/
 *.pyc
@@ -11,14 +10,16 @@ __pycache__/
 
 # Environment Variables & Secrets
 .env
-alembic.ini
+alembic.ini   # (optional - can be committed)
 
 # PyCharm/IDE Settings
 .idea/
 .vscode/
 
-# Generated Output Tests
+# Generated Output
 *.pdf
-testing/*.pdf
-/testing/
-/scripts/
+testing/
+scripts/
+
+# Alembic (keep versions but ignore temp files)
+alembic/versions/__pycache__/

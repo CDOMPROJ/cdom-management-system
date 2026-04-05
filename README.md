@@ -2,25 +2,18 @@
 
 A FastAPI-based pastoral management system for the Catholic Diocese of Mansa.
 
-## Setup Instructions
+## Quick Start (No manual fixes required)
+
 1. Clone the repo
-2. Copy `.env.example` → `.env` and fill values
-3. `pip install -r app/requirements.txt`
-4. Start PostgreSQL (see docker-compose.yml)
-5. Run migrations: `alembic -c app/alembic.ini upgrade head`
-6. Start server: `uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload`
+2. Copy `.env.example` → `.env` and fill the values
+3. `pip install -r requirements.txt`
+4. Start PostgreSQL: `docker-compose up -d db`
+5. Run the backend: `docker-compose up backend`  
+   → **Migrations run automatically** on every start (development/staging)
 
-## Docker
-See `docker-compose.yml` and `Dockerfile`.
-
-## API
-Swagger: http://localhost:8000/docs  
-All endpoints under `/api/v1/`
-
-## Production Notes
-- CORS restricted
-- HTTPS enforced
-- Security headers enabled
-- Prometheus metrics at `/metrics`
-
-For frontend integration see the paired Flutter repo.
+## Local Development (without Docker)
+```bash
+pip install -r requirements.txt
+docker-compose up -d db
+alembic upgrade head
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
