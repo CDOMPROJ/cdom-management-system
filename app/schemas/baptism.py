@@ -2,10 +2,10 @@ from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import date
 import uuid
-from app.schemas.schemas import ReligionCategory  # explicit shared import from central file
-
+from app.schemas.schemas import ReligionCategory
 
 class BaptismBase(BaseModel):
+    """Base schema for Baptism records."""
     first_name: str
     middle_name: Optional[str] = None
     last_name: str
@@ -27,12 +27,12 @@ class BaptismBase(BaseModel):
             raise ValueError('Date cannot be in the future')
         return v
 
-
 class BaptismCreate(BaptismBase):
+    """Schema used when creating a new baptism record."""
     pass
 
-
 class BaptismResponse(BaptismBase):
+    """Response schema for baptism records."""
     id: uuid.UUID
     canonical_number: str
 

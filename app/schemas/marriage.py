@@ -2,10 +2,10 @@ from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import date
 import uuid
-from app.schemas.schemas import ReligionCategory  # explicit shared import from central file
-
+from app.schemas.schemas import ReligionCategory
 
 class MarriageBase(BaseModel):
+    """Base schema for Marriage records."""
     groom_first_name: str
     groom_last_name: str
     groom_dob: date
@@ -42,12 +42,12 @@ class MarriageBase(BaseModel):
             raise ValueError('Date cannot be in the future')
         return v
 
-
 class MarriageCreate(MarriageBase):
+    """Schema used when creating a new marriage record."""
     pass
 
-
 class MarriageResponse(MarriageBase):
+    """Response schema for marriage records."""
     id: uuid.UUID
     canonical_number: str
 

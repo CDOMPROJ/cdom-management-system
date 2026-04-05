@@ -1,4 +1,6 @@
-# app/schemas/__init__.py
+"""Central export file for all Pydantic schemas.
+This allows clean imports like: from app.schemas import BaptismCreate"""
+
 from .schemas import (
     PaginatedResponse,
     ReligionCategory,
@@ -23,39 +25,9 @@ from .schemas import (
     DirectUserCreateRequest,
 )
 
-from .baptism import (
-    BaptismBase,
-    BaptismCreate,
-    BaptismResponse,
-)
-
-from .marriage import (
-    MarriageBase,
-    MarriageCreate,
-    MarriageResponse,
-)
-
-from .first_communion import (
-    FirstCommunionBase,
-    FirstCommunionCreate,
-    FirstCommunionResponse,
-)
-
-from .confirmation import (
-    ConfirmationBase,
-    ConfirmationCreate,
-    ConfirmationResponse,
-)
-
-from .death_register import (
-    DeathRegisterBase,
-    DeathRegisterCreate,
-    DeathRegisterResponse,
-)
-
-from .finances import (
-    FinanceBase,
-    FinanceCreate,
-    FinanceResponse,
-    DiocesanContributionUpdate,
-)
+from .baptism import BaptismBase, BaptismCreate, BaptismResponse
+from .marriage import MarriageBase, MarriageCreate, MarriageResponse
+from .first_communion import FirstCommunionBase, FirstCommunionCreate, FirstCommunionResponse
+from .confirmation import ConfirmationBase, ConfirmationCreate, ConfirmationResponse
+from .death_register import DeathRegisterBase, DeathRegisterCreate, DeathRegisterResponse
+from .finances import FinanceBase, FinanceCreate, FinanceResponse, DiocesanContributionUpdate

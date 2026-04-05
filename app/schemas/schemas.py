@@ -1,3 +1,5 @@
+"""Central shared schemas and base models used across the entire application."""
+
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List, Generic, TypeVar, Dict, Any
 from datetime import date, datetime
@@ -7,22 +9,21 @@ import re
 
 T = TypeVar("T")
 
-
 class PaginatedResponse(BaseModel, Generic[T]):
+    """Standard paginated response wrapper."""
     total_count: int
     limit: int
     skip: int
     data: List[T]
 
-
 class ReligionCategory(str, enum.Enum):
+    """Canonical religion categories used in marriage and other registers."""
     CATHOLIC = "Catholic"
     OTHER_CHRISTIAN = "Other Christian"
     NON_CHRISTIAN = "Non-Christian"
 
-
 # ==============================================================================
-# 0. EXECUTIVE GEOGRAPHY (DEANERIES & PARISHES)
+# GEOGRAPHY SCHEMAS
 # ==============================================================================
 class DeaneryBase(BaseModel):
     name: str
@@ -50,14 +51,12 @@ class ParishResponse(ParishBase):
     class Config:
         from_attributes = True
 
-
 # ==============================================================================
-# 1. AUTHENTICATION, USERS & MFA
+# AUTHENTICATION & USER SCHEMAS
 # ==============================================================================
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
-
 
 class LoginResponse(BaseModel):
     access_token: Optional[str] = None
@@ -66,16 +65,13 @@ class LoginResponse(BaseModel):
     temp_token: Optional[str] = None
     message: Optional[str] = None
 
-
 class MFASetupResponse(BaseModel):
     secret: str
     provisioning_uri: str
 
-
 class MFAVerifyRequest(BaseModel):
     temp_token: Optional[str] = None
     code: str
-
 
 class UserInviteRequest(BaseModel):
     email: EmailStr
@@ -83,7 +79,6 @@ class UserInviteRequest(BaseModel):
     role: str
     parish_id: Optional[int] = None
     deanery_id: Optional[int] = None
-
 
 class UserSetupRequest(BaseModel):
     token: str
@@ -104,10 +99,8 @@ class UserSetupRequest(BaseModel):
             raise ValueError('Password must contain at least one special character')
         return v
 
-
 class TokenData(BaseModel):
     username: Optional[str] = None
-
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -117,7 +110,6 @@ class UserCreate(BaseModel):
     role: str
     parish_id: Optional[int] = None
     deanery_id: Optional[int] = None
-
 
 class UserResponse(BaseModel):
     id: uuid.UUID
@@ -132,20 +124,16 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
-
 
 class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str = Field(..., min_length=8, description="Must be at least 8 characters")
 
-
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str = Field(..., min_length=8, description="Must be at least 8 characters")
-
 
 class DirectUserCreateRequest(BaseModel):
     email: EmailStr
@@ -154,12 +142,3 @@ class DirectUserCreateRequest(BaseModel):
     office: str
     parish_id: int | None = None
     deanery_id: int | None = None
-
-
-# Explicit imports of split sacramental schemas
-from app.schemas.baptism import BaptismBase, BaptismCreate, BaptismResponse
-from app.schemas.marriage import MarriageBase, MarriageCreate, MarriageResponse
-from app.schemas.first_communion import FirstCommunionBase, FirstCommunionCreate, FirstCommunionResponse
-from app.schemas.confirmation import ConfirmationBase, ConfirmationCreate, ConfirmationResponse
-from app.schemas.death_register import DeathRegisterBase, DeathRegisterCreate, DeathRegisterResponse
-from app.schemas.finances import FinanceBase, FinanceCreate, FinanceResponse, DiocesanContributionUpdate
