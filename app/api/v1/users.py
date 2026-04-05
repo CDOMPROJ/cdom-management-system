@@ -11,7 +11,7 @@ from app.core.email import send_invitation_email
 
 # Database Models and Pydantic Schemas
 from app.models.all_models import User, UserInvitationModel
-from app.schemas.schemas import UserInviteRequest, UserSetupRequest, DirectUserCreateRequest
+from app.schemas.old_schemas import UserInviteRequest, UserSetupRequest, DirectUserCreateRequest
 
 router = APIRouter()
 

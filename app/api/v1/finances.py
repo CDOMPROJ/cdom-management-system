@@ -20,7 +20,7 @@ from app.models.all_models import (
     DiocesanFundCategory1,
     DiocesanFundCategory2
 )
-from app.schemas.schemas import FinanceCreate, DiocesanContributionUpdate
+from app.schemas.old_schemas import FinanceCreate, DiocesanContributionUpdate
 
 router = APIRouter()
 

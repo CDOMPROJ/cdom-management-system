@@ -13,7 +13,7 @@ from reportlab.lib.units import cm
 from app.core.dependencies import get_db, require_create_access, require_read_access, require_update_access, \
     require_parish_priest
 from app.models.all_models import YouthProfileModel, YouthActionPlanModel, ActionPlanCommunicationModel, User
-from app.schemas.schemas import YouthProfileCreate, YouthProfileResponse, YouthActionPlanCreate, \
+from app.schemas.old_schemas import YouthProfileCreate, YouthProfileResponse, YouthActionPlanCreate, \
     YouthActionPlanResponse, PaginatedResponse
 
 # If you have your email system hooked up, import it here:

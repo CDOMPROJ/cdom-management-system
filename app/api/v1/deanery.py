@@ -6,7 +6,7 @@ from typing import List
 # Secure internal imports
 from app.core.dependencies import get_db, require_sysadmin_access, require_read_access, get_current_active_user
 from app.models.all_models import DeaneryModel, ParishModel, DiocesanAnalyticsModel, User
-from app.schemas.schemas import DeaneryCreate, DeaneryResponse, ParishCreate, ParishResponse
+from app.schemas.old_schemas import DeaneryCreate, DeaneryResponse, ParishCreate, ParishResponse
 
 router = APIRouter()
 

@@ -13,7 +13,7 @@ from app.core.dependencies import (
     require_update_access, process_modification_request
 )
 from app.models.all_models import DeathRegisterModel, BaptismModel, GlobalRegistryIndex, User
-from app.schemas.schemas import DeathRegisterCreate
+from app.schemas.old_schemas import DeathRegisterCreate
 
 router = APIRouter()
 
