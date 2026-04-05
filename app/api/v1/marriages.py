@@ -15,7 +15,7 @@ from app.core.dependencies import (
     process_modification_request
 )
 from app.models.all_models import MarriageModel, User
-from app.schemas.old_schemas import MarriageCreate
+from app.schemas.schemas import MarriageCreate
 
 router = APIRouter()
 

@@ -12,7 +12,7 @@ from app.core.dependencies import (
     require_update_access, process_modification_request
 )
 from app.models.all_models import FirstCommunionModel, GlobalRegistryIndex, User
-from app.schemas.old_schemas import FirstCommunionCreate
+from app.schemas.schemas import FirstCommunionCreate
 
 router = APIRouter()
 

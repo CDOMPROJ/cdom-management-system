@@ -5,7 +5,7 @@ from rapidfuzz import process
 
 from app.core.dependencies import get_db, require_read_access
 from app.models.all_models import GlobalRegistryIndex, ParishModel, User
-from app.schemas.old_schemas import SearchResponse, GlobalSearchResult
+from app.schemas.schemas import SearchResponse, GlobalSearchResult
 
 router = APIRouter()
 

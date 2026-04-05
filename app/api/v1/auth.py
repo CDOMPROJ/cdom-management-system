@@ -8,7 +8,7 @@ import uuid
 from app.core.security import verify_password, create_access_token
 from app.core.dependencies import get_db, get_current_active_user
 from app.models.all_models import User
-from app.schemas.old_schemas import LoginRequest, LoginResponse, MFAVerifyRequest
+from app.schemas.schemas import LoginRequest, LoginResponse, MFAVerifyRequest
 
 router = APIRouter()
 

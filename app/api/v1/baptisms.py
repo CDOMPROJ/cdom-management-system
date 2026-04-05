@@ -15,7 +15,7 @@ from app.core.dependencies import (
     process_modification_request
 )
 from app.models.all_models import BaptismModel, GlobalRegistryIndex, User
-from app.schemas.old_schemas import BaptismCreate
+from app.schemas.schemas import BaptismCreate
 
 router = APIRouter()
 
