@@ -11,9 +11,13 @@ class FinanceBase(BaseModel):
     amount: float
     notes: Optional[str] = None
 
-class FinanceCreate(FinanceBase):
+class FinanceCreate(BaseModel):
     """Schema used when creating a new financial transaction."""
-    pass
+    transaction_date: date
+    transaction_type: str
+    category: str
+    amount: float
+    notes: Optional[str] = None
 
 class FinanceResponse(FinanceBase):
     """Response schema for finance records."""

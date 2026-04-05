@@ -26,9 +26,20 @@ class FirstCommunionBase(BaseModel):
             raise ValueError('Date cannot be in the future')
         return v
 
-class FirstCommunionCreate(FirstCommunionBase):
+class FirstCommunionCreate(BaseModel):
     """Schema used when creating a new first communion record."""
-    pass
+    first_name: str
+    middle_name: Optional[str] = None
+    last_name: str
+    father_first_name: str
+    father_last_name: str
+    mother_first_name: str
+    mother_last_name: str
+    baptism_number: str
+    baptised_at: str
+    communion_date: date
+    minister: str
+    place_of_communion: str
 
 class FirstCommunionResponse(FirstCommunionBase):
     """Response schema for first communion records."""

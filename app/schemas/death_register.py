@@ -23,9 +23,17 @@ class DeathRegisterBase(BaseModel):
             raise ValueError('Date cannot be in the future')
         return v
 
-class DeathRegisterCreate(DeathRegisterBase):
+class DeathRegisterCreate(BaseModel):
     """Schema used when creating a new death register record."""
-    pass
+    first_name: str
+    middle_name: Optional[str] = None
+    last_name: str
+    dob: date
+    date_of_death: date
+    baptism_number: Optional[str] = None
+    cause_of_death: Optional[str] = None
+    village: str
+    center: str
 
 class DeathRegisterResponse(DeathRegisterBase):
     """Response schema for death register records."""

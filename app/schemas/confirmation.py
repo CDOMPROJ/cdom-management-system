@@ -26,9 +26,20 @@ class ConfirmationBase(BaseModel):
             raise ValueError('Date cannot be in the future')
         return v
 
-class ConfirmationCreate(ConfirmationBase):
+class ConfirmationCreate(BaseModel):
     """Schema used when creating a new confirmation record."""
-    pass
+    first_name: str
+    middle_name: Optional[str] = None
+    last_name: str
+    dob: date
+    father_first_name: str
+    father_last_name: str
+    mother_first_name: str
+    mother_last_name: str
+    baptism_number: str
+    confirmation_date: date
+    minister: str
+    place_of_confirmation: str
 
 class ConfirmationResponse(ConfirmationBase):
     """Response schema for confirmation records."""

@@ -27,9 +27,21 @@ class BaptismBase(BaseModel):
             raise ValueError('Date cannot be in the future')
         return v
 
-class BaptismCreate(BaptismBase):
+class BaptismCreate(BaseModel):
     """Schema used when creating a new baptism record."""
-    pass
+    first_name: str
+    middle_name: Optional[str] = None
+    last_name: str
+    dob: date
+    date_of_baptism: date
+    father_first_name: str
+    father_last_name: str
+    mother_first_name: str
+    mother_last_name: str
+    godparents: str
+    minister_of_baptism: str
+    village: str
+    center: str
 
 class BaptismResponse(BaptismBase):
     """Response schema for baptism records."""

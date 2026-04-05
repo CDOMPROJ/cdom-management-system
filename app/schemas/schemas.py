@@ -29,7 +29,8 @@ class DeaneryBase(BaseModel):
     name: str
 
 class DeaneryCreate(DeaneryBase):
-    pass
+    """Schema used when creating a new deanery."""
+    name: str
 
 class DeaneryResponse(DeaneryBase):
     id: int
@@ -43,7 +44,10 @@ class ParishBase(BaseModel):
     schema_name: str
 
 class ParishCreate(ParishBase):
-    pass
+    """Schema used when creating a new parish."""
+    name: str
+    deanery_id: int
+    schema_name: str
 
 class ParishResponse(ParishBase):
     id: int
