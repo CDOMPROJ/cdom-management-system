@@ -11,14 +11,25 @@ import uuid
 import enum
 import re
 
-# FastAPI Dependency Injection imports
 from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 
 T = TypeVar("T")
 
-# OAuth2 integration
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
+# STRICT OFFICE ENUM – EXACTLY 9 VALUES
+class Office(str, enum.Enum):
+    BISHOP = "Bishop"
+    SYS_ADMIN = "Sys Admin"
+    DEAN = "Dean"
+    DEANERY_YOUTH_CHAPLAIN = "Deanery Youth Chaplain"
+    PARISH_PRIEST = "Parish Priest"
+    ASSISTANT_PRIEST = "Assistant Priest"
+    PARISH_YOUTH_CHAPLAIN = "Parish Youth Chaplain"
+    PARISH_SECRETARY = "Parish Secretary"
+
 
 # ==========================================
 # 1. COMMON / SHARED SCHEMAS
@@ -141,6 +152,7 @@ class UserCreate(BaseModel):
     first_name: str
     last_name: str
     role: str
+    office: Office
     parish_id: Optional[int] = None
     deanery_id: Optional[int] = None
 
@@ -159,7 +171,7 @@ class DirectUserCreateRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=16)
     role: str
-    office: str
+    office: Office
     parish_id: int | None = None
     deanery_id: int | None = None
 

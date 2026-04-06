@@ -1,7 +1,7 @@
 # ==============================================================================
 # CDOM PASTORAL MANAGEMENT SYSTEM – ALL MODELS (SINGLE FILE)
 # Centralized location for ALL SQLAlchemy models. Used by Alembic and FastAPI.
-# Last updated: Authentication Hardening Phase + Sacramental Registers
+# Last updated: Authentication Hardening + Strict Office Enforcement (9 offices)
 # ==============================================================================
 
 from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Numeric, Text, DateTime, Enum
@@ -10,13 +10,13 @@ from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 import uuid
 import enum
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 Base = declarative_base()
 
 
 # ==============================================================================
-# 0. ENUMS (STRICT CANONICAL & FINANCIAL CATEGORIZATION)
+# 0. ENUMS (STRICT CANONICAL & FINANCIAL CATEGORIZATION + OFFICE ENFORCEMENT)
 # ==============================================================================
 class ReligionCategory(str, enum.Enum):
     CATHOLIC = "Catholic"
@@ -77,6 +77,18 @@ class DiocesanFundCategory2(str, enum.Enum):
     COMMUNICATION_SUNDAY = "Communication Sunday"
 
 
+# STRICT OFFICE ENUM – EXACTLY 9 VALUES
+class Office(str, enum.Enum):
+    BISHOP = "Bishop"
+    SYS_ADMIN = "Sys Admin"
+    DEAN = "Dean"
+    DEANERY_YOUTH_CHAPLAIN = "Deanery Youth Chaplain"
+    PARISH_PRIEST = "Parish Priest"
+    ASSISTANT_PRIEST = "Assistant Priest"
+    PARISH_YOUTH_CHAPLAIN = "Parish Youth Chaplain"
+    PARISH_SECRETARY = "Parish Secretary"
+
+
 # ==============================================================================
 # 1. GEOGRAPHY & IDENTITY
 # ==============================================================================
@@ -90,7 +102,6 @@ class ParishModel(Base):
     __tablename__ = "parishes"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
-    # INDEX ADDED: Speeds up deanery-level aggregations
     deanery_id = Column(Integer, ForeignKey("deaneries.id", ondelete="RESTRICT"), index=True)
     schema_name = Column(String, unique=True)
 
@@ -100,45 +111,45 @@ class ParishModel(Base):
 # ==============================================================================
 class User(Base):
     __tablename__ = "users"
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
+    first_name = Column(String, nullable=False)
+    last_name = Column(String, nullable=False)
     role = Column(String, nullable=False)
-    office = Column(String, nullable=False)
+    office = Column(Enum(Office), nullable=False)  # STRICT ENFORCEMENT – ONLY 9 VALUES ALLOWED
 
-    # INDEXES ADDED: Speeds up RBAC and geographical authorization
-    parish_id = Column(Integer, ForeignKey("parishes.id", ondelete="SET NULL"), nullable=True, index=True)
-    deanery_id = Column(Integer, ForeignKey("deaneries.id", ondelete="SET NULL"), nullable=True, index=True)
-    reset_token = Column(String, unique=True, index=True, nullable=True)
-    reset_token_expires = Column(DateTime(timezone=True), nullable=True)
+    parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True)
+    deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True)
 
-    mfa_enabled = Column(Boolean, default=False)
-    mfa_secret = Column(String, nullable=True)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Authentication Hardening fields (added from new version)
     token_version = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    mfa_enabled = Column(Boolean, default=False, nullable=False)
+    mfa_secret = Column(String, nullable=True)
+
     phone_number = Column(String, nullable=True)
     password_history = Column(JSONB, default=list, nullable=False)
-    last_password_change = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    last_password_change = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
     failed_login_attempts = Column(Integer, default=0, nullable=False)
     lockout_until = Column(DateTime(timezone=True), nullable=True)
+
     webauthn_credentials = Column(JSONB, default=list, nullable=False)
 
-    # Relationships
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc), nullable=False)
+
     revoked_tokens = relationship("RevokedTokenModel", back_populates="user", cascade="all, delete-orphan")
 
 
 class RevokedTokenModel(Base):
-    """Token revocation table for logout-all-devices and security hardening."""
     __tablename__ = "revoked_tokens"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     jti = Column(String, unique=True, nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
-    revoked_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    revoked_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
     reason = Column(String, nullable=True)
 
     user = relationship("User", back_populates="revoked_tokens")
@@ -150,15 +161,12 @@ class UserInvitationModel(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     token = Column(String, unique=True, index=True, nullable=False)
     role = Column(String, nullable=False)
-    office = Column(String, nullable=False)
+    office = Column(Enum(Office), nullable=False)
     parish_id = Column(Integer, nullable=True)
     deanery_id = Column(Integer, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
 
-# ==============================================================================
-# 3. GOVERNANCE & AUDIT (IMMUTABLE LEDGER)
-# ==============================================================================
 class AuditLogModel(Base):
     __tablename__ = "audit_logs"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -166,7 +174,6 @@ class AuditLogModel(Base):
     target_table = Column(String, nullable=False, index=True)
     target_record_id = Column(String, nullable=False, index=True)
     changed_by = Column(String, nullable=False)
-    # INDEX ADDED
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     previous_payload = Column(JSONB, nullable=True)
     new_payload = Column(JSONB, nullable=False)
@@ -185,9 +192,6 @@ class PendingActionModel(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-# ==============================================================================
-# 4. GLOBAL INTELLIGENCE INDEX
-# ==============================================================================
 class GlobalRegistryIndex(Base):
     __tablename__ = "global_registry_index"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -195,43 +199,24 @@ class GlobalRegistryIndex(Base):
     canonical_number = Column(String, nullable=True, index=True)
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
-    # INDEX ADDED: Crucial for lightning-fast Sacramental ETL aggregation
-    parish_id = Column(Integer, ForeignKey("parishes.id", ondelete="CASCADE"), index=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    date_of_event = Column(Date, nullable=True, index=True)
+    indexed_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-# ==============================================================================
-# 5. CLERGY REGISTRY (BISHOP-ONLY)
-# ==============================================================================
 class ClergyRegistryModel(Base):
-    """Bishop-exclusive summary registry – NO sensitive personal data.
-    Tracks only canonical status for priests, sisters, and brothers.
-    Deacons and seminarians are explicitly excluded per CDOM policy."""
     __tablename__ = "clergy_registry"
-
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # Link to existing User table for login correlation (never exposed)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-
-    # Summary fields only
-    category = Column(String, nullable=False, index=True)  # "Diocesan Priest", "Religious Priest", "Sister", "Brother"
-    congregation = Column(String, nullable=False, index=True)  # e.g., "Salesians", "Franciscans", "Sisters of Charity"
-    status = Column(String, nullable=False, index=True)  # Uses ClergyStatus enum values
-    current_location = Column(String, nullable=True)  # "Inside Diocese", "Outside Diocese", "Studying Abroad"
-    ministry_category = Column(String, nullable=True)  # "Parish", "Deanery", "Curia", "Formation", "Retired"
+    category = Column(String, nullable=False, index=True)
+    congregation = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, index=True)
+    current_location = Column(String, nullable=True)
+    ministry_category = Column(String, nullable=True)
     last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    # Bishop-only audit
     updated_by = Column(String, nullable=False)
 
-    __table_args__ = (
-        # Ensure only Bishop can see/edit – enforced in router
-    )
 
-
-# ==============================================================================
-# 6. SACRAMENTAL MODELS
-# ==============================================================================
 class BaptismModel(Base):
     __tablename__ = "baptisms"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -324,9 +309,6 @@ class DeathRegisterModel(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-# ==============================================================================
-# 7. FINANCIAL MODELS (PARISH LEDGER & UMUTULO)
-# ==============================================================================
 class FinanceModel(Base):
     __tablename__ = "parish_finances"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -354,9 +336,6 @@ class DiocesanContributionModel(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-# ==============================================================================
-# 8. YOUTH MINISTRY & COMMUNICATIONS
-# ==============================================================================
 class YouthProfileModel(Base):
     __tablename__ = "youth_profiles"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -392,7 +371,6 @@ class YouthActionPlanModel(Base):
 class ActionPlanCommunicationModel(Base):
     __tablename__ = "action_plan_communications"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # INDEX ADDED: Essential for quick retrieval of email threads
     plan_id = Column(UUID(as_uuid=True), ForeignKey("youth_action_plans.id", ondelete="CASCADE"), index=True)
     sender_email = Column(String, nullable=False)
     sender_role = Column(String, nullable=False)
@@ -404,13 +382,9 @@ class ActionPlanCommunicationModel(Base):
     plan = relationship("YouthActionPlanModel", back_populates="communications")
 
 
-# ==============================================================================
-# 9. ANALYTICS (GOLD LAYER)
-# ==============================================================================
 class DiocesanAnalyticsModel(Base):
     __tablename__ = "diocesan_analytics"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # INDEX ADDED: Accelerates the Bishop's Dashboard queries
     parish_id = Column(Integer, ForeignKey("parishes.id", ondelete="CASCADE"), index=True)
     parish_name = Column(String, nullable=False)
     reporting_year = Column(Integer, nullable=False, index=True)
