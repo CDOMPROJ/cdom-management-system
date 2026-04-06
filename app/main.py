@@ -125,4 +125,4 @@ async def root():
 
 @app.get("/metrics", tags=["Monitoring"])
 async def metrics():
-    return {"message": "Prometheus metrics available at /metrics"}
+    return {"message": "Prometheus metrics are available at /metrics"}
