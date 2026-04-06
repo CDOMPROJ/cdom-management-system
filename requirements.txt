@@ -1,46 +1,69 @@
 # ==========================================
-# 1. CORE WEB FRAMEWORK
+# CDOM Pastoral Management System – requirements.txt
+# SecurityPatch Edition (Thoroughly Updated & Python 3.13 Compatible – April 5, 2026)
 # ==========================================
-fastapi>=0.100.0
-uvicorn[standard]>=0.23.0
 
 # ==========================================
-# 2. CONFIGURATION & SECRETS
+# 1. CORE WEB FRAMEWORK (Production-Grade)
 # ==========================================
-# Pydantic V2 is strictly required to prevent the PROJECT_NAME crash
-pydantic>=2.4.0
-pydantic-settings>=2.0.0
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+starlette==0.38.6
 
 # ==========================================
-# 3. BRONZE LAYER (DATABASE & ORM)
+# 2. CONFIGURATION & ENVIRONMENT MANAGEMENT
 # ==========================================
-# SQLAlchemy 2.0+ is required for the modern async syntax we are using
-sqlalchemy>=2.0.0
-asyncpg>=0.28.0
-alembic>=1.12.0
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-dotenv==1.0.1
 
 # ==========================================
-# 4. IDENTITY & ACCESS MANAGEMENT (IAM)
+# 3. DATABASE & ORM (Full Async SQLAlchemy 2.0+)
 # ==========================================
-passlib[bcrypt]>=1.7.4
-PyJWT>=2.8.0
+sqlalchemy==2.0.36
+asyncpg==0.30.0                 # Python 3.13 compatible version
+alembic==1.13.2
+sqlmodel==0.0.22
 
 # ==========================================
-# 5. THE INTELLIGENCE LAYER
+# 4. IDENTITY & ACCESS MANAGEMENT (IAM) – SecurityPatch Core
 # ==========================================
-# Required for the typo-tolerant local parish searches
-rapidfuzz>=3.4.0
+passlib[bcrypt]==1.7.4
+PyJWT==2.9.0
+pyotp==2.9.0
+webauthn==2.7.1
 
 # ==========================================
-# 6. COMMUNICATIONS & GOLD LAYER
+# 5. INTELLIGENCE & SEARCH LAYER
 # ==========================================
-resend>=0.7.0
-reportlab>=4.0.0
+rapidfuzz==3.13.0
 
 # ==========================================
-# 7. QUALITY ASSURANCE & HARDENING
+# 6. COMMUNICATIONS & UTILITIES
 # ==========================================
-slowapi>=0.1.8
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-httpx>=0.24.0
+resend==0.8.0
+reportlab==4.2.2
+
+# ==========================================
+# 7. SECURITY & RATE LIMITING (PostgreSQL-based, no Redis)
+# ==========================================
+slowapi==0.1.9
+
+# ==========================================
+# 8. MONITORING & OBSERVABILITY
+# ==========================================
+prometheus-fastapi-instrumentator==7.0.0
+
+# ==========================================
+# 9. TESTING & QUALITY ASSURANCE
+# ==========================================
+pytest==8.3.3
+pytest-asyncio==0.23.8
+httpx==0.27.2
+bandit==1.7.9
+safety==3.2.0
+
+# ==========================================
+# 10. DEVELOPMENT & DEPENDENCY LOCKING
+# ==========================================
+pip-tools==7.4.1

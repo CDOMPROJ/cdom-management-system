@@ -2,29 +2,44 @@ import asyncio
 import os
 import sys
 from logging.config import fileConfig
+from dotenv import find_dotenv, load_dotenv
+
+# ==================== ROBUST .env LOADING (searches up the directory tree) ====================
+load_dotenv(find_dotenv())
 
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# ==================== FORCE CORRECT ALEMBIC IMPORT (fixes IDE shadowing) ====================
-import alembic  # explicit import first to prevent folder shadowing
-from alembic import context  # type: ignore  # IDE warning silenced
+# ==================== FORCE CORRECT ALEMBIC IMPORT ====================
+from alembic import context  # type: ignore
 
-# ==================== PATH SETUP (exact match to original repo structure) ====================
-# The original repo uses a 'backend' subfolder — we keep the exact path they used
-sys.path.append(
+# ==================== PATH SETUP ====================
+sys.path.insert(
+    0,
     os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "backend")
+        os.path.join(os.path.dirname(__file__), "..")
     )
 )
 
-# Import the declarative Base (exact match to live repo)
+# Import the declarative Base
 from app.models.all_models import Base
 
 # this is the Alembic Config object
 config = context.config
 
-# Interpret the config file for Python logging.
+# ==================== SET DATABASE_URL FROM .env ====================
+database_url = os.getenv("DATABASE_URL")
+if not database_url:
+    raise RuntimeError(
+        "DATABASE_URL environment variable is not set.\n"
+        "1. Create a file named .env in the backend root folder\n"
+        "2. Copy the content from .env.example into it\n"
+        "3. Fill in your real DATABASE_URL value"
+    )
+
+config.set_main_option("sqlalchemy.url", database_url)
+
+# Interpret the config file for Python logging
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
@@ -33,7 +48,6 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -54,8 +68,6 @@ def do_run_migrations(connection):
 
 
 async def run_async_migrations() -> None:
-    """In this scenario we need to create an AsyncEngine
-    and associate a connection with the context."""
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -69,7 +81,6 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
     asyncio.run(run_async_migrations())
 
 
