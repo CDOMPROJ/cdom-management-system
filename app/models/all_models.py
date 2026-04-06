@@ -1,7 +1,8 @@
 # ==============================================================================
 # CDOM PASTORAL MANAGEMENT SYSTEM – ALL MODELS (SINGLE FILE)
 # Centralized location for ALL SQLAlchemy models. Used by Alembic and FastAPI.
-# Last updated: Authentication Hardening + Strict Office Enforcement (9 offices)
+# Phase 3.1: Fine-grained RBAC + ABAC + object ownership + session management
+# Exact 8 offices with spaces as per repo. No hallucinated permissions.
 # ==============================================================================
 
 from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Numeric, Text, DateTime, Enum
@@ -10,74 +11,14 @@ from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 import uuid
 import enum
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 Base = declarative_base()
 
 
 # ==============================================================================
-# 0. ENUMS (STRICT CANONICAL & FINANCIAL CATEGORIZATION + OFFICE ENFORCEMENT)
+# 0. ENUMS (EXACT 8 OFFICES WITH SPACES – LOCKED FROM REPO)
 # ==============================================================================
-class ReligionCategory(str, enum.Enum):
-    CATHOLIC = "Catholic"
-    OTHER_CHRISTIAN = "Other Christian"
-    NON_CHRISTIAN = "Non-Christian"
-
-
-class TransactionType(str, enum.Enum):
-    INCOME = "Income"
-    EXPENSE = "Expense"
-
-
-class ClergyStatus(str, enum.Enum):
-    ACTIVE = "Active"
-    INACTIVE = "Inactive"
-    SUSPENDED = "Suspended"
-    OUTSIDE_DIOCESE = "Outside Diocese"
-    STUDYING = "Studying"
-
-
-class IncomeCategory(str, enum.Enum):
-    ICISUMINO_CANDI = "Icisumino Candi"
-    UBULOBOLOLO = "Ubulobololo (Harvest Total)"
-    SUNDAY_COLLECTIONS = "Sunday Collections"
-    SPECIAL_COLLECTIONS = "Special Collections"
-    FUNDRAISING = "Fundraising"
-    DONATIONS = "Donations"
-    ASSET_YIELDS = "Asset Yields"
-
-
-class ExpenseCategory(str, enum.Enum):
-    DIOCESAN_ASSESSMENT_REMITTANCE = "Diocesan Assessment Remittance"
-    PASTORAL_LITURGICAL = "Pastoral & Liturgical"
-    CLERGY_WELFARE = "Clergy Welfare"
-    ADMINISTRATION = "Administration"
-    UTILITIES = "Utilities"
-    WAGES_AND_SALARIES = "Wages and Salaries"
-    MAINTENANCE = "Maintenance"
-    APOSTOLATE_FUNDING = "Apostolate Funding"
-    CHARITY = "Charity"
-
-
-class DiocesanFundCategory1(str, enum.Enum):
-    UMUTULO_WAKU_DIOCESE = "Umutulo waku Diocese"
-    SOLIDARITY_FUND = "Solidarity Fund"
-    SEMINARIAN_FUND = "Seminarian Fund"
-
-
-class DiocesanFundCategory2(str, enum.Enum):
-    EPIPHANY = "Epiphany"
-    HOLY_LAND = "Holy Land"
-    LAZARO_MULANDA = "Lazaro Mulanda"
-    VOCATION_SUNDAY = "Vocation Sunday"
-    MENS_PASTORAL_FUND = "Men's Pastoral Fund"
-    BIBLE = "Bible"
-    MISSION_SUNDAY = "Mission Sunday"
-    PAPA = "Papa (Peter and Paul)"
-    COMMUNICATION_SUNDAY = "Communication Sunday"
-
-
-# STRICT OFFICE ENUM – EXACTLY 9 VALUES
 class Office(str, enum.Enum):
     BISHOP = "Bishop"
     SYS_ADMIN = "Sys Admin"
@@ -89,9 +30,109 @@ class Office(str, enum.Enum):
     PARISH_SECRETARY = "Parish Secretary"
 
 
+class ReligionCategory(str, enum.Enum):
+    CATHOLIC = "Catholic"
+    OTHER_CHRISTIAN = "Other Christian"
+    NON_CHRISTIAN = "Non-Christian"
+
+
+class TransactionType(str, enum.Enum):
+    INCOME = "Income"
+    EXPENSE = "Expense"
+
+
 # ==============================================================================
-# 1. GEOGRAPHY & IDENTITY
+# 1. NEW RBAC/ABAC MODELS
 # ==============================================================================
+class Permission(Base):
+    __tablename__ = "permissions"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, unique=True, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    scope_level = Column(String, nullable=False, index=True)  # diocese | deanery | parish | global
+    resource_type = Column(String, nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    role = Column(Enum(Office), primary_key=True, nullable=False)
+    permission_id = Column(UUID(as_uuid=True), ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+
+
+# ==============================================================================
+# 2. NEW SESSION & DEVICE MANAGEMENT MODELS
+# ==============================================================================
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    device_fingerprint = Column(String, nullable=False, index=True)
+    ip_address = Column(String, nullable=False)
+    user_agent = Column(Text, nullable=False)
+    last_active = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    is_trusted = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
+
+    user = relationship("User", back_populates="sessions")
+
+
+class ElevatedToken(Base):
+    __tablename__ = "elevated_tokens"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    token = Column(String, unique=True, nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    reason = Column(String, nullable=False)
+    used = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
+
+    user = relationship("User")
+
+
+# ==============================================================================
+# 3. EXISTING MODELS + OWNERSHIP COLUMNS (full expansion)
+# ==============================================================================
+class User(Base):
+    __tablename__ = "users"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    first_name = Column(String, nullable=False)
+    last_name = Column(String, nullable=False)
+    office = Column(Enum(Office), nullable=False)
+    parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True)
+    deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True)
+    token_version = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    mfa_enabled = Column(Boolean, default=False, nullable=False)
+    mfa_secret = Column(String, nullable=True)
+    phone_number = Column(String, nullable=True)
+    password_history = Column(JSONB, default=list, nullable=False)
+    last_password_change = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    lockout_until = Column(DateTime(timezone=True), nullable=True)
+    webauthn_credentials = Column(JSONB, default=list, nullable=False)
+    permissions_cache = Column(JSONB, default=list, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc), nullable=False)
+
+    revoked_tokens = relationship("RevokedTokenModel", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
+
+
+class RevokedTokenModel(Base):
+    __tablename__ = "revoked_tokens"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    jti = Column(String, unique=True, nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
+    reason = Column(String, nullable=True)
+    user = relationship("User", back_populates="revoked_tokens")
+
+
 class DeaneryModel(Base):
     __tablename__ = "deaneries"
     id = Column(Integer, primary_key=True, index=True)
@@ -104,55 +145,6 @@ class ParishModel(Base):
     name = Column(String, index=True)
     deanery_id = Column(Integer, ForeignKey("deaneries.id", ondelete="RESTRICT"), index=True)
     schema_name = Column(String, unique=True)
-
-
-# ==============================================================================
-# 2. AUTHENTICATION HARDENING – USER & REVOKED TOKEN
-# ==============================================================================
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String, unique=True, nullable=False, index=True)
-    password_hash = Column(String, nullable=False)
-    first_name = Column(String, nullable=False)
-    last_name = Column(String, nullable=False)
-    role = Column(String, nullable=False)
-    office = Column(Enum(Office), nullable=False)  # STRICT ENFORCEMENT – ONLY 9 VALUES ALLOWED
-
-    parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True)
-    deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True)
-
-    token_version = Column(Integer, default=0, nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
-    mfa_enabled = Column(Boolean, default=False, nullable=False)
-    mfa_secret = Column(String, nullable=True)
-
-    phone_number = Column(String, nullable=True)
-    password_history = Column(JSONB, default=list, nullable=False)
-    last_password_change = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
-    failed_login_attempts = Column(Integer, default=0, nullable=False)
-    lockout_until = Column(DateTime(timezone=True), nullable=True)
-
-    webauthn_credentials = Column(JSONB, default=list, nullable=False)
-
-    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc), nullable=False)
-
-    revoked_tokens = relationship("RevokedTokenModel", back_populates="user", cascade="all, delete-orphan")
-
-
-class RevokedTokenModel(Base):
-    __tablename__ = "revoked_tokens"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    jti = Column(String, unique=True, nullable=False, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    revoked_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), nullable=False)
-    reason = Column(String, nullable=True)
-
-    user = relationship("User", back_populates="revoked_tokens")
 
 
 class UserInvitationModel(Base):
@@ -202,6 +194,9 @@ class GlobalRegistryIndex(Base):
     parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
     date_of_event = Column(Date, nullable=True, index=True)
     indexed_at = Column(DateTime(timezone=True), server_default=func.now())
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
 
 class ClergyRegistryModel(Base):
@@ -215,6 +210,9 @@ class ClergyRegistryModel(Base):
     ministry_category = Column(String, nullable=True)
     last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     updated_by = Column(String, nullable=False)
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
 
 class BaptismModel(Base):
@@ -238,6 +236,9 @@ class BaptismModel(Base):
     is_deceased = Column(Boolean, default=False)
     death_record_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
 
 class FirstCommunionModel(Base):
@@ -252,6 +253,9 @@ class FirstCommunionModel(Base):
     row_number = Column(Integer, nullable=False)
     formatted_number = Column(String, nullable=False, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
 
 class ConfirmationModel(Base):
@@ -268,6 +272,9 @@ class ConfirmationModel(Base):
     row_number = Column(Integer, nullable=False)
     formatted_number = Column(String, nullable=False, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
 
 class MarriageModel(Base):
@@ -289,6 +296,9 @@ class MarriageModel(Base):
     row_number = Column(Integer, nullable=False)
     formatted_number = Column(String, nullable=False, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
 
 class DeathRegisterModel(Base):
@@ -307,6 +317,9 @@ class DeathRegisterModel(Base):
     row_number = Column(Integer, nullable=False)
     formatted_number = Column(String, nullable=False, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
 
 class FinanceModel(Base):
@@ -320,6 +333,9 @@ class FinanceModel(Base):
     recorded_by = Column(String, nullable=False)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
 
 class DiocesanContributionModel(Base):
@@ -334,6 +350,9 @@ class DiocesanContributionModel(Base):
     last_payment_date = Column(Date, nullable=True)
     notes = Column(Text, nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
 
 class YouthProfileModel(Base):
@@ -350,6 +369,9 @@ class YouthProfileModel(Base):
     is_confirmed = Column(Boolean, default=False)
     canonical_baptism_number = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
 
 class YouthActionPlanModel(Base):
@@ -365,6 +387,9 @@ class YouthActionPlanModel(Base):
     created_by = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
     communications = relationship("ActionPlanCommunicationModel", back_populates="plan", cascade="all, delete-orphan")
 
 
@@ -396,6 +421,9 @@ class DiocesanAnalyticsModel(Base):
     diocesan_contributions_target_ytd = Column(Numeric(12, 2), default=0.00)
     diocesan_contributions_actual_ytd = Column(Numeric(12, 2), default=0.00)
     last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    owner_parish_id = Column(Integer, ForeignKey("parishes.id"), nullable=True, index=True)
+    owner_deanery_id = Column(Integer, ForeignKey("deaneries.id"), nullable=True, index=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
 
 # ==============================================================================

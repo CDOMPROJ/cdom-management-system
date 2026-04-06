@@ -1,117 +1,96 @@
 # ==============================================================================
-# CDOM Pastoral Management System – Auth Router (OAuth2 + Hardening)
-# Full OAuth2 routers with WebAuthn, lockout, phone verification, password policy
+# app/api/v1/auth.py
+# Full Phase 3.4 Auth Router – Session tracking, elevated tokens, trusted devices
 # ==============================================================================
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
-from datetime import datetime, timedelta, timezone
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete
 from app.db.session import get_db
-from app.models.all_models import User
-from app.schemas.schemas import (
-    LoginRequest, LoginResponse, Token, TokenRefresh,
-    MFAVerifyRequest, WebAuthnRegistrationRequest, WebAuthnLoginRequest,
-    PhoneVerificationRequest, PhoneVerificationCode,
-    PasswordPolicyResponse, AccountLockoutStatus,
-)
-from app.core.security import (
-    verify_password, get_password_hash, create_access_token, create_refresh_token,
-    decode_token, is_token_revoked, revoke_token, revoke_all_user_tokens,
-    enforce_password_policy, check_lockout, record_failed_attempt, reset_failed_attempts,
-    verify_phone_code, get_webauthn_registration_options, verify_webauthn_registration,
-    get_webauthn_login_options, verify_webauthn_login,
-)
-from app.schemas.schemas import oauth2_scheme
+from app.core.security import get_current_user
+from app.core.authorization import PermissionChecker, generate_device_fingerprint
+from app.models.all_models import User, UserSession, ElevatedToken
+from pydantic import BaseModel
+from typing import List
 import uuid
+from datetime import datetime, timedelta, timezone
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+class SessionResponse(BaseModel):
+    id: str
+    device_fingerprint: str
+    ip_address: str
+    user_agent: str
+    last_active: datetime
+    is_trusted: bool
 
-@router.post("/login", response_model=LoginResponse)
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.password_hash):
-        if user:
-            record_failed_attempt(db, user)
-            check_lockout(user)
-        raise HTTPException(status_code=400, detail="Incorrect email or password")
+class ElevatedTokenRequest(BaseModel):
+    reason: str
 
-    check_lockout(user)
-
-    if user.mfa_enabled:
-        return LoginResponse(mfa_required=True, temp_token="temp-mfa-token")
-
-    access_token = create_access_token(str(user.id), user.token_version)
-    refresh_token = create_refresh_token(str(user.id), user.token_version)
-
-    reset_failed_attempts(db, user)
-    return LoginResponse(access_token=access_token, refresh_token=refresh_token)
-
-
-@router.post("/refresh", response_model=Token)
-async def refresh_token(token_refresh: TokenRefresh, db: Session = Depends(get_db)):
-    payload = decode_token(token_refresh.refresh_token)
-    user_id = payload["sub"]
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user or is_token_revoked(db, payload.get("jti")):
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
-    access_token = create_access_token(user_id, user.token_version)
-    return Token(access_token=access_token, refresh_token=token_refresh.refresh_token)
-
-
-@router.post("/webauthn/register")
-async def webauthn_register(data: WebAuthnRegistrationRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == uuid.UUID(data.credential_id)).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    verify_webauthn_registration(user, data, db)
-    return {"status": "registered"}
-
-
-@router.post("/webauthn/login")
-async def webauthn_login(data: WebAuthnLoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == uuid.UUID(data.credential_id)).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    verify_webauthn_login(user, data, db)
-    access_token = create_access_token(str(user.id), user.token_version)
-    return Token(access_token=access_token, refresh_token="refresh-placeholder")
-
-
-@router.post("/phone/verify")
-async def phone_verify(request: PhoneVerificationRequest, code: PhoneVerificationCode, db: Session = Depends(get_db)):
-    if not verify_phone_code(request.phone_number, code.code):
-        raise HTTPException(status_code=400, detail="Invalid verification code")
-    return {"status": "verified"}
-
-
-@router.post("/logout")
-async def logout(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    payload = decode_token(token)
-    revoke_token(db, payload.get("jti"), uuid.UUID(payload["sub"]), reason="logout")
-    return {"status": "logged out"}
-
-
-@router.post("/logout-all")
-async def logout_all(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    payload = decode_token(token)
-    revoke_all_user_tokens(db, uuid.UUID(payload["sub"]))
-    return {"status": "logged out from all devices"}
-
-
-@router.get("/password-policy", response_model=PasswordPolicyResponse)
-async def get_password_policy():
-    return PasswordPolicyResponse()
-
-
-@router.get("/lockout-status", response_model=AccountLockoutStatus)
-async def get_lockout_status(user_id: uuid.UUID, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return AccountLockoutStatus(
-        locked=user.lockout_until is not None and user.lockout_until > datetime.now(timezone.utc),
-        remaining_attempts=max(0, 5 - user.failed_login_attempts),
-        lockout_until=user.lockout_until,
+# Session Tracking API
+@router.get("/sessions", response_model=List[SessionResponse])
+async def list_active_sessions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(UserSession).where(UserSession.user_id == current_user.id)
     )
+    return result.scalars().all()
+
+@router.post("/sessions/{session_id}/logout")
+async def logout_specific_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    session = await db.get(UserSession, session_id)
+    if not session or session.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await db.delete(session)
+    await db.commit()
+    return {"message": "Session logged out successfully"}
+
+# Elevated Access Token (Bishop-only)
+@router.post("/elevate")
+async def create_elevated_token(
+    request: ElevatedTokenRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.office.value != "Bishop":
+        raise HTTPException(status_code=403, detail="Only the Bishop can create elevated tokens")
+    token = str(uuid.uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+    elevated = ElevatedToken(
+        token=token,
+        user_id=current_user.id,
+        expires_at=expires_at,
+        reason=request.reason
+    )
+    db.add(elevated)
+    await db.commit()
+    return {"token": token, "expires_at": expires_at.isoformat()}
+
+# Trusted Device Management
+@router.post("/devices/trust")
+async def trust_device(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    ua = request.headers.get("user-agent", "")
+    ip = request.client.host if request.client else ""
+    fingerprint = generate_device_fingerprint(ua, ip)
+    session = UserSession(
+        user_id=current_user.id,
+        device_fingerprint=fingerprint,
+        ip_address=ip,
+        user_agent=ua,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+        is_trusted=True
+    )
+    db.add(session)
+    await db.commit()
+    return {"message": "Device marked as trusted", "fingerprint": fingerprint}

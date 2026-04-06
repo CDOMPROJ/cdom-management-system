@@ -2,30 +2,30 @@
 # CDOM Pastoral Management System – Core Security (Authentication Hardening)
 # Full implementation of WebAuthn, strict password policy, account lockout,
 # phone/email verification, OAuth2, and all previous JWT/revocation logic
+# + get_current_user added for Phase 3.2
 # ==============================================================================
 
+from sqlalchemy import select
+from app.core.config import settings
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 import uuid
 import re
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from sqlalchemy.ext.asyncio import AsyncSession
 from webauthn import (
     generate_registration_options,
-    verify_registration_response,
     generate_authentication_options,
-    verify_authentication_response,
 )
-from webauthn.helpers.structs import PublicKeyCredentialCreationOptions
 
 from sqlalchemy.orm import Session
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Depends
+from fastapi.security import OAuth2PasswordBearer
+
+from app.db.session import get_db
 from app.models.all_models import User, RevokedTokenModel
 from app.schemas.schemas import (
-    PasswordPolicyResponse,
-    AccountLockoutStatus,
-    PhoneVerificationRequest,
     WebAuthnRegistrationRequest,
     WebAuthnLoginRequest,
 )
@@ -169,3 +169,33 @@ def get_webauthn_login_options(user: User):
 def verify_webauthn_login(user: User, data: WebAuthnLoginRequest, db: Session):
     reset_failed_attempts(db, user)
     return True
+
+
+# ==============================================================================
+# ADDED FOR PHASE 3.2 (ABAC + ownership checks)
+# ==============================================================================
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise credentials_exception
+    return user
