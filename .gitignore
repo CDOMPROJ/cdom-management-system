@@ -22,4 +22,4 @@ testing/
 scripts/
 
 # Alembic (keep versions but ignore temp files)
-alembic/versions/__pycache__/
+alembic/
