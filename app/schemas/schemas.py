@@ -4,14 +4,21 @@
 # Single source of truth for all FastAPI endpoints
 # ==========================================
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
 from typing import Optional, List, Generic, TypeVar, Dict, Any
 from datetime import date, datetime
 import uuid
 import enum
 import re
 
+# FastAPI Dependency Injection imports
+from fastapi import Depends
+from fastapi.security import OAuth2PasswordBearer
+
 T = TypeVar("T")
+
+# OAuth2 integration
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 # ==========================================
 # 1. COMMON / SHARED SCHEMAS
@@ -22,12 +29,15 @@ class PaginatedResponse(BaseModel, Generic[T]):
     skip: int
     data: List[T]
 
+    model_config = ConfigDict(from_attributes=True, str_strip_whitespace=True)
+
 
 class ErrorResponse(BaseModel):
-    """Standardized error response used across all endpoints."""
     detail: str
     code: str = "error"
     timestamp: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ReligionCategory(str, enum.Enum):
@@ -43,14 +53,11 @@ class DeaneryBase(BaseModel):
     name: str
 
 class DeaneryCreate(DeaneryBase):
-    """Schema used when creating a new deanery."""
     name: str
 
 class DeaneryResponse(DeaneryBase):
     id: int
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ParishBase(BaseModel):
     name: str
@@ -58,44 +65,47 @@ class ParishBase(BaseModel):
     schema_name: str
 
 class ParishCreate(ParishBase):
-    """Schema used when creating a new parish."""
     name: str
     deanery_id: int
     schema_name: str
 
 class ParishResponse(ParishBase):
     id: int
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==============================================================================
-# 1. AUTHENTICATION, USERS & MFA
+# 1. AUTHENTICATION SCHEMAS – OPTIMIZED & GROUPED
 # ==============================================================================
+class Token(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+class TokenRefresh(BaseModel):
+    refresh_token: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
-
 class LoginResponse(BaseModel):
-    """Dynamically returns either a full JWT, or demands MFA with a temp token."""
     access_token: Optional[str] = None
     token_type: str = "bearer"
     mfa_required: bool = False
     temp_token: Optional[str] = None
     message: Optional[str] = None
 
-
 class MFASetupResponse(BaseModel):
     secret: str
     provisioning_uri: str
 
-
 class MFAVerifyRequest(BaseModel):
     temp_token: Optional[str] = None
     code: str
-
 
 class UserInviteRequest(BaseModel):
     email: EmailStr
@@ -104,9 +114,7 @@ class UserInviteRequest(BaseModel):
     parish_id: Optional[int] = None
     deanery_id: Optional[int] = None
 
-
 class UserSetupRequest(BaseModel):
-    """Payload submitted by the user to finalize account. Enforces password security."""
     token: str
     first_name: str
     last_name: str
@@ -115,20 +123,17 @@ class UserSetupRequest(BaseModel):
     @field_validator('password')
     @classmethod
     def password_complexity(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError('Password must be at least 8 characters long')
+        if len(v) < 16:
+            raise ValueError('Password must be at least 16 characters long')
         if not any(char.isdigit() for char in v):
             raise ValueError('Password must contain at least one number')
         if not any(char.isupper() for char in v):
             raise ValueError('Password must contain at least one uppercase letter')
+        if not any(char.islower() for char in v):
+            raise ValueError('Password must contain at least one lowercase letter')
         if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
             raise ValueError('Password must contain at least one special character')
         return v
-
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -139,7 +144,6 @@ class UserCreate(BaseModel):
     parish_id: Optional[int] = None
     deanery_id: Optional[int] = None
 
-
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: EmailStr
@@ -149,32 +153,69 @@ class UserResponse(BaseModel):
     is_active: bool
     mfa_enabled: bool
     parish_id: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+class DirectUserCreateRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=16)
+    role: str
+    office: str
+    parish_id: int | None = None
+    deanery_id: int | None = None
 
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
 class ResetPasswordRequest(BaseModel):
     token: str
-    new_password: str = Field(..., min_length=8, description="Must be at least 8 characters")
+    new_password: str = Field(..., min_length=16)
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
-    new_password: str = Field(..., min_length=8, description="Must be at least 8 characters")
+    new_password: str = Field(..., min_length=16)
 
-class DirectUserCreateRequest(BaseModel):
-    email: EmailStr
-    password: str = Field(..., min_length=8)
-    role: str
-    office: str
-    parish_id: int | None = None
-    deanery_id: int | None = None
+class WebAuthnRegistrationRequest(BaseModel):
+    credential_id: str
+    public_key: str
+    attestation_object: str
+    client_data_json: str
+
+class WebAuthnLoginRequest(BaseModel):
+    credential_id: str
+    authenticator_data: str
+    client_data_json: str
+    signature: str
+
+class PasswordPolicyResponse(BaseModel):
+    min_length: int = 16
+    require_uppercase: bool = True
+    require_lowercase: bool = True
+    require_digit: bool = True
+    require_special: bool = True
+    password_history: int = 12
+    expiry_days: int = 90
+
+class AccountLockoutStatus(BaseModel):
+    locked: bool
+    remaining_attempts: int
+    lockout_until: Optional[datetime] = None
+
+class PhoneVerificationRequest(BaseModel):
+    phone_number: str = Field(..., pattern=r"^\+?1?\d{9,15}$")
+
+    @field_validator('phone_number')
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        if not re.match(r"^\+?1?\d{9,15}$", v):
+            raise ValueError('Invalid phone number format')
+        return v
+
+class PhoneVerificationCode(BaseModel):
+    code: str = Field(..., min_length=6, max_length=6)
 
 
 # ==============================================================================
-# 2. SACRAMENTAL REGISTERS (WITH DATE GOVERNANCE)
+# 2. SACRAMENTAL REGISTERS (WITH ENHANCED PYDANTIC V2 VALIDATORS)
 # ==============================================================================
 class BaptismBase(BaseModel):
     first_name: str
@@ -198,9 +239,7 @@ class BaptismBase(BaseModel):
             raise ValueError('Date cannot be in the future')
         return v
 
-
 class BaptismCreate(BaptismBase):
-    """Schema used when creating a new baptism record."""
     first_name: str
     middle_name: Optional[str] = None
     last_name: str
@@ -215,14 +254,10 @@ class BaptismCreate(BaptismBase):
     village: str
     center: str
 
-
 class BaptismResponse(BaptismBase):
-    """Response schema for baptism records."""
     id: uuid.UUID
     canonical_number: str
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MarriageBase(BaseModel):
@@ -262,9 +297,7 @@ class MarriageBase(BaseModel):
             raise ValueError('Date cannot be in the future')
         return v
 
-
 class MarriageCreate(MarriageBase):
-    """Schema used when creating a new marriage record."""
     groom_first_name: str
     groom_last_name: str
     groom_dob: date
@@ -294,14 +327,10 @@ class MarriageCreate(MarriageBase):
     banns_published_on: Optional[date] = None
     dispensation_from_impediment: Optional[str] = None
 
-
 class MarriageResponse(MarriageBase):
-    """Response schema for marriage records."""
     id: uuid.UUID
     canonical_number: str
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FirstCommunionBase(BaseModel):
@@ -325,9 +354,7 @@ class FirstCommunionBase(BaseModel):
             raise ValueError('Date cannot be in the future')
         return v
 
-
 class FirstCommunionCreate(FirstCommunionBase):
-    """Schema used when creating a new first communion record."""
     first_name: str
     middle_name: Optional[str] = None
     last_name: str
@@ -341,14 +368,10 @@ class FirstCommunionCreate(FirstCommunionBase):
     minister: str
     place_of_communion: str
 
-
 class FirstCommunionResponse(FirstCommunionBase):
-    """Response schema for first communion records."""
     id: uuid.UUID
     canonical_number: str
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ConfirmationBase(BaseModel):
@@ -377,7 +400,6 @@ class ConfirmationBase(BaseModel):
         return v
 
 class ConfirmationCreate(ConfirmationBase):
-    """Schema used when creating a new confirmation record."""
     first_name: str
     middle_name: Optional[str] = None
     last_name: str
@@ -396,12 +418,9 @@ class ConfirmationCreate(ConfirmationBase):
     god_parent_is_confirmed: bool
 
 class ConfirmationResponse(ConfirmationBase):
-    """Response schema for confirmation records."""
     id: uuid.UUID
     formatted_number: str
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DeathRegisterBase(BaseModel):
@@ -423,9 +442,7 @@ class DeathRegisterBase(BaseModel):
             raise ValueError('Date cannot be in the future')
         return v
 
-
 class DeathRegisterCreate(DeathRegisterBase):
-    """Schema used when creating a new death register record."""
     first_name: str
     last_name: str
     date_of_death: date
@@ -437,14 +454,10 @@ class DeathRegisterCreate(DeathRegisterBase):
     baptism_number: Optional[str] = None
     next_of_kin: str
 
-
 class DeathRegisterResponse(DeathRegisterBase):
-    """Response schema for death register records."""
     id: uuid.UUID
     formatted_number: str
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==============================================================================
@@ -470,7 +483,6 @@ class YouthProfileBase(BaseModel):
         return v
 
 class YouthProfileCreate(YouthProfileBase):
-    """Schema used when creating a new youth profile."""
     first_name: str
     last_name: str
     dob: date
@@ -483,12 +495,9 @@ class YouthProfileCreate(YouthProfileBase):
     canonical_baptism_number: Optional[str] = None
 
 class YouthProfileResponse(YouthProfileBase):
-    """Response schema for youth profiles."""
     id: uuid.UUID
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CommunicationBase(BaseModel):
@@ -501,13 +510,10 @@ class CommunicationBase(BaseModel):
 
 
 class CommunicationResponse(CommunicationBase):
-    """Response schema for action plan communications."""
     id: uuid.UUID
     plan_id: uuid.UUID
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class YouthActionPlanBase(BaseModel):
@@ -519,7 +525,6 @@ class YouthActionPlanBase(BaseModel):
 
 
 class YouthActionPlanCreate(YouthActionPlanBase):
-    """Schema used when creating a new youth action plan."""
     academic_year: int
     title: str
     target_demographic: str
@@ -528,17 +533,13 @@ class YouthActionPlanCreate(YouthActionPlanBase):
 
 
 class YouthActionPlanResponse(YouthActionPlanBase):
-    """Response schema for youth action plans."""
     id: uuid.UUID
     status: str
     created_by: str
     pp_feedback: Optional[str] = None
     created_at: datetime
-
     communications: List[CommunicationResponse] = []
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==============================================================================
@@ -558,35 +559,27 @@ class FinanceBase(BaseModel):
             raise ValueError('Transaction date cannot be in the future')
         return v
 
-
 class FinanceCreate(FinanceBase):
-    """Schema used when creating a new financial transaction."""
     transaction_date: date
     transaction_type: str
     category: str
     amount: float = Field(..., gt=0.0, description="Amount must be greater than zero")
     notes: Optional[str] = None
 
-
 class FinanceResponse(FinanceBase):
-    """Response schema for finance records."""
     id: uuid.UUID
     recorded_by: str
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DiocesanContributionUpdate(BaseModel):
-    """Used when the parish makes a payment towards their assessment."""
     payment_amount: float = Field(..., gt=0.0)
     payment_date: date
     notes: Optional[str] = None
 
 
 class DiocesanContributionResponse(BaseModel):
-    """Response schema for diocesan contribution records."""
     id: uuid.UUID
     reporting_year: int
     fund_name: str
@@ -595,9 +588,7 @@ class DiocesanContributionResponse(BaseModel):
     actual_amount_paid: float
     variance_amount: Optional[float]
     last_payment_date: Optional[date]
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==========================================
@@ -610,20 +601,24 @@ class ClergyRegistryBase(BaseModel):
     current_location: Optional[str] = None
     ministry_category: Optional[str] = None
 
+
 class ClergyRegistryCreate(ClergyRegistryBase):
-    """Schema used when creating a new clergy registry record."""
+    category: str
+    congregation: Optional[str] = None
+    status: str
+    current_location: Optional[str] = None
+    ministry_category: Optional[str] = None
+
 
 class ClergyRegistryResponse(ClergyRegistryBase):
     id: uuid.UUID
     last_updated: datetime
     updated_by: str
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==============================================================================
-# 5. GLOBAL SEARCH (RAPIDFUZZ)
+# 6. GLOBAL SEARCH (RAPIDFUZZ)
 # ==============================================================================
 class GlobalSearchResult(BaseModel):
     record_type: str
@@ -642,7 +637,7 @@ class SearchResponse(BaseModel):
 
 
 # ==============================================================================
-# 6. GOVERNANCE & APPROVALS (PENDING ACTIONS)
+# 7. GOVERNANCE & APPROVALS (PENDING ACTIONS)
 # ==============================================================================
 class PendingActionBase(BaseModel):
     requested_by: EmailStr
@@ -653,7 +648,6 @@ class PendingActionBase(BaseModel):
 
 
 class PendingActionCreate(PendingActionBase):
-    """Schema used when creating a new pending action."""
     requested_by: EmailStr
     action_type: str
     target_table: str
@@ -662,28 +656,12 @@ class PendingActionCreate(PendingActionBase):
 
 
 class PendingActionResponse(PendingActionBase):
-    """Response schema for pending actions."""
     id: uuid.UUID
     status: str
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
-# ==========================================
-# SECURITYPATCH ADDITIONS
-# ==========================================
-class Token(BaseModel):
-    """Response schema for access + refresh tokens (SecurityPatch)."""
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-
-class TokenRefresh(BaseModel):
-    """Request schema for refreshing tokens (SecurityPatch)."""
-    refresh_token: str
-
-class PasswordChangeRequest(BaseModel):
-    """Request schema for changing password (SecurityPatch)."""
-    new_password: str
+# ==============================================================================
+# END OF SCHEMAS
+# ==============================================================================

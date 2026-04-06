@@ -1,9 +1,16 @@
+# ==============================================================================
+# CDOM PASTORAL MANAGEMENT SYSTEM – ALL MODELS (SINGLE FILE)
+# Centralized location for ALL SQLAlchemy models. Used by Alembic and FastAPI.
+# Last updated: Authentication Hardening Phase + Sacramental Registers
+# ==============================================================================
+
 from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, Numeric, Text, DateTime, Enum
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 import uuid
 import enum
+from datetime import datetime
 
 Base = declarative_base()
 
@@ -21,37 +28,13 @@ class TransactionType(str, enum.Enum):
     INCOME = "Income"
     EXPENSE = "Expense"
 
+
 class ClergyStatus(str, enum.Enum):
     ACTIVE = "Active"
     INACTIVE = "Inactive"
     SUSPENDED = "Suspended"
     OUTSIDE_DIOCESE = "Outside Diocese"
     STUDYING = "Studying"
-
-class ClergyRegistryModel(Base):
-    """Bishop-exclusive summary registry – NO sensitive personal data.
-    Tracks only canonical status for priests, sisters, and brothers.
-    Deacons and seminarians are explicitly excluded per CDOM policy."""
-    __tablename__ = "clergy_registry"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # Link to existing User table for login correlation (never exposed)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-
-    # Summary fields only
-    category = Column(String, nullable=False, index=True)  # "Diocesan Priest", "Religious Priest", "Sister", "Brother"
-    congregation = Column(String, nullable=False, index=True)  # e.g., "Salesians", "Franciscans", "Sisters of Charity"
-    status = Column(String, nullable=False, index=True)  # Uses ClergyStatus enum values
-    current_location = Column(String, nullable=True)  # "Inside Diocese", "Outside Diocese", "Studying Abroad"
-    ministry_category = Column(String, nullable=True)  # "Parish", "Deanery", "Curia", "Formation", "Retired"
-    last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    # Bishop-only audit
-    updated_by = Column(String, nullable=False)
-
-    __table_args__ = (
-        # Ensure only Bishop can see/edit – enforced in router
-    )
 
 
 class IncomeCategory(str, enum.Enum):
@@ -95,7 +78,7 @@ class DiocesanFundCategory2(str, enum.Enum):
 
 
 # ==============================================================================
-# 1. GEOGRAPHY & IDENTITY (PUBLIC SCHEMA)
+# 1. GEOGRAPHY & IDENTITY
 # ==============================================================================
 class DeaneryModel(Base):
     __tablename__ = "deaneries"
@@ -112,6 +95,9 @@ class ParishModel(Base):
     schema_name = Column(String, unique=True)
 
 
+# ==============================================================================
+# 2. AUTHENTICATION HARDENING – USER & REVOKED TOKEN
+# ==============================================================================
 class User(Base):
     __tablename__ = "users"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -119,7 +105,6 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False)
     office = Column(String, nullable=False)
-
 
     # INDEXES ADDED: Speeds up RBAC and geographical authorization
     parish_id = Column(Integer, ForeignKey("parishes.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -131,6 +116,32 @@ class User(Base):
     mfa_secret = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Authentication Hardening fields (added from new version)
+    token_version = Column(Integer, default=0, nullable=False)
+    phone_number = Column(String, nullable=True)
+    password_history = Column(JSONB, default=list, nullable=False)
+    last_password_change = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    lockout_until = Column(DateTime(timezone=True), nullable=True)
+    webauthn_credentials = Column(JSONB, default=list, nullable=False)
+
+    # Relationships
+    revoked_tokens = relationship("RevokedTokenModel", back_populates="user", cascade="all, delete-orphan")
+
+
+class RevokedTokenModel(Base):
+    """Token revocation table for logout-all-devices and security hardening."""
+    __tablename__ = "revoked_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    jti = Column(String, unique=True, nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    reason = Column(String, nullable=True)
+
+    user = relationship("User", back_populates="revoked_tokens")
 
 
 class UserInvitationModel(Base):
@@ -146,7 +157,7 @@ class UserInvitationModel(Base):
 
 
 # ==============================================================================
-# 2. GOVERNANCE & AUDIT (IMMUTABLE LEDGER)
+# 3. GOVERNANCE & AUDIT (IMMUTABLE LEDGER)
 # ==============================================================================
 class AuditLogModel(Base):
     __tablename__ = "audit_logs"
@@ -175,7 +186,7 @@ class PendingActionModel(Base):
 
 
 # ==============================================================================
-# 3. GLOBAL INTELLIGENCE INDEX
+# 4. GLOBAL INTELLIGENCE INDEX
 # ==============================================================================
 class GlobalRegistryIndex(Base):
     __tablename__ = "global_registry_index"
@@ -190,7 +201,36 @@ class GlobalRegistryIndex(Base):
 
 
 # ==============================================================================
-# 4. SACRAMENTAL MODELS
+# 5. CLERGY REGISTRY (BISHOP-ONLY)
+# ==============================================================================
+class ClergyRegistryModel(Base):
+    """Bishop-exclusive summary registry – NO sensitive personal data.
+    Tracks only canonical status for priests, sisters, and brothers.
+    Deacons and seminarians are explicitly excluded per CDOM policy."""
+    __tablename__ = "clergy_registry"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Link to existing User table for login correlation (never exposed)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Summary fields only
+    category = Column(String, nullable=False, index=True)  # "Diocesan Priest", "Religious Priest", "Sister", "Brother"
+    congregation = Column(String, nullable=False, index=True)  # e.g., "Salesians", "Franciscans", "Sisters of Charity"
+    status = Column(String, nullable=False, index=True)  # Uses ClergyStatus enum values
+    current_location = Column(String, nullable=True)  # "Inside Diocese", "Outside Diocese", "Studying Abroad"
+    ministry_category = Column(String, nullable=True)  # "Parish", "Deanery", "Curia", "Formation", "Retired"
+    last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Bishop-only audit
+    updated_by = Column(String, nullable=False)
+
+    __table_args__ = (
+        # Ensure only Bishop can see/edit – enforced in router
+    )
+
+
+# ==============================================================================
+# 6. SACRAMENTAL MODELS
 # ==============================================================================
 class BaptismModel(Base):
     __tablename__ = "baptisms"
@@ -285,7 +325,7 @@ class DeathRegisterModel(Base):
 
 
 # ==============================================================================
-# 5. FINANCIAL MODELS (PARISH LEDGER & UMUTULO)
+# 7. FINANCIAL MODELS (PARISH LEDGER & UMUTULO)
 # ==============================================================================
 class FinanceModel(Base):
     __tablename__ = "parish_finances"
@@ -315,7 +355,7 @@ class DiocesanContributionModel(Base):
 
 
 # ==============================================================================
-# 6. YOUTH MINISTRY & COMMUNICATIONS
+# 8. YOUTH MINISTRY & COMMUNICATIONS
 # ==============================================================================
 class YouthProfileModel(Base):
     __tablename__ = "youth_profiles"
@@ -365,7 +405,7 @@ class ActionPlanCommunicationModel(Base):
 
 
 # ==============================================================================
-# 7. ANALYTICS (GOLD LAYER)
+# 9. ANALYTICS (GOLD LAYER)
 # ==============================================================================
 class DiocesanAnalyticsModel(Base):
     __tablename__ = "diocesan_analytics"
@@ -382,3 +422,8 @@ class DiocesanAnalyticsModel(Base):
     diocesan_contributions_target_ytd = Column(Numeric(12, 2), default=0.00)
     diocesan_contributions_actual_ytd = Column(Numeric(12, 2), default=0.00)
     last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ==============================================================================
+# END OF ALL MODELS
+# ==============================================================================
