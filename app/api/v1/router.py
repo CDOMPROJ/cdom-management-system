@@ -70,7 +70,6 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": "Internal server error"})
 
-
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
 # Add CORS
