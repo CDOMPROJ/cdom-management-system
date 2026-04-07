@@ -1,19 +1,30 @@
+# ==============================================================================
+# app/api/v1/bishop.py
+# FULL SUPERSET OF THE ORIGINAL RICH LOGIC + PHASE 3 OWNERSHIP/ABAC ENFORCEMENT
+# ==============================================================================
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from datetime import datetime, timezone
 from typing import Dict, Any
 
-from app.core.dependencies import get_db, require_bishop_access
+# PHASE 3 SECURE IMPORTS (replacing old dependencies)
+from app.core.security import get_current_user
+from app.core.authorization import PermissionChecker, OwnershipService
+from app.db.session import get_db
 from app.models.all_models import User, DiocesanAnalyticsModel, GlobalRegistryIndex, ClergyRegistryModel
 from app.ml.vocation_forecaster import generate_intelligence_horizon
 
 router = APIRouter()
 
+ownership_service = OwnershipService()
+
+
 @router.get("/intelligence-horizon", response_model=Dict[str, Any])
 async def get_intelligence_horizon(
         db: AsyncSession = Depends(get_db),
-        _bishop: User = Depends(require_bishop_access)
+        current_user: User = Depends(get_current_user)
 ):
     """
     REVISED BISHOP-ONLY INTELLIGENCE HORIZON DASHBOARD CARD
@@ -21,6 +32,9 @@ async def get_intelligence_horizon(
     Forecast visualization is now clean, chart-ready with yearly data,
     predicted values, confidence bands, growth rates, and trend direction.
     """
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("bishop:read")(current_user)
+
     now = datetime.now(timezone.utc)
 
     # Registry Status Summary

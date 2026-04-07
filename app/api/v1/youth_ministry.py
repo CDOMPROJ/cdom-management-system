@@ -10,8 +10,10 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 
-from app.core.dependencies import get_db, require_create_access, require_read_access, require_update_access, \
-    require_parish_priest
+# PHASE 3 SECURE IMPORTS (replacing old dependencies)
+from app.core.security import get_current_user
+from app.core.authorization import PermissionChecker, OwnershipService
+from app.db.session import get_db
 from app.models.all_models import YouthProfileModel, YouthActionPlanModel, ActionPlanCommunicationModel, User
 from app.schemas.schemas import YouthProfileCreate, YouthProfileResponse, YouthActionPlanCreate, \
     YouthActionPlanResponse, PaginatedResponse
@@ -20,6 +22,8 @@ from app.schemas.schemas import YouthProfileCreate, YouthProfileResponse, YouthA
 # from app.core.email import send_system_email
 
 router = APIRouter()
+
+ownership_service = OwnershipService()
 
 
 # ==============================================================================
@@ -52,8 +56,12 @@ async def log_communication(
 async def register_youth(
         profile_in: YouthProfileCreate,
         db: AsyncSession = Depends(get_db),
-        _current_user: User = Depends(require_create_access)
+        current_user: User = Depends(get_current_user)
 ):
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("youth:write")(current_user)
+    await ownership_service.check_ownership(profile_in, current_user)
+
     try:
         new_profile = YouthProfileModel(**profile_in.model_dump())
         db.add(new_profile)
@@ -68,8 +76,11 @@ async def register_youth(
 async def search_youth_profiles(
         q: str = Query(..., min_length=2),
         db: AsyncSession = Depends(get_db),
-        _current_user: User = Depends(require_read_access)
+        current_user: User = Depends(get_current_user)
 ):
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("youth:read")(current_user)
+
     result = await db.execute(select(YouthProfileModel))
     rows = result.scalars().all()
     if not rows: return {"results": [], "message": "No youth profiles found."}
@@ -89,8 +100,11 @@ async def get_unbaptised_youth(
         skip: int = Query(0, ge=0),
         limit: int = Query(20, ge=1, le=100),
         db: AsyncSession = Depends(get_db),
-        _current_user: User = Depends(require_read_access)
+        current_user: User = Depends(get_current_user)
 ):
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("youth:read")(current_user)
+
     count_query = await db.execute(
         select(func.count(YouthProfileModel.id)).where(YouthProfileModel.is_baptised == False))
     total_count = count_query.scalar() or 0
@@ -105,8 +119,11 @@ async def get_uncommunicated_youth(
         skip: int = Query(0, ge=0),
         limit: int = Query(20, ge=1, le=100),
         db: AsyncSession = Depends(get_db),
-        _current_user: User = Depends(require_read_access)
+        current_user: User = Depends(get_current_user)
 ):
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("youth:read")(current_user)
+
     count_query = await db.execute(select(func.count(YouthProfileModel.id)).where(YouthProfileModel.is_baptised == True,
                                                                                   YouthProfileModel.is_communicant == False))
     total_count = count_query.scalar() or 0
@@ -124,9 +141,13 @@ async def get_uncommunicated_youth(
 async def draft_action_plan(
         plan_in: YouthActionPlanCreate,
         db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(require_create_access)  # YC Level
+        current_user: User = Depends(get_current_user)  # YC Level
 ):
     """YC drafts a new pastoral plan. Starts in DRAFT status."""
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("youth:write")(current_user)
+    await ownership_service.check_ownership(plan_in, current_user)
+
     new_plan = YouthActionPlanModel(**plan_in.model_dump(), created_by=current_user.email, status="DRAFT")
     db.add(new_plan)
     await db.commit()
@@ -137,9 +158,12 @@ async def draft_action_plan(
 @router.get("/action-plans", response_model=list[YouthActionPlanResponse])
 async def get_all_action_plans(
         db: AsyncSession = Depends(get_db),
-        _current_user: User = Depends(require_read_access)
+        current_user: User = Depends(get_current_user)
 ):
     """Fetches plans and eagerly loads the communication email threads."""
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("youth:read")(current_user)
+
     query = select(YouthActionPlanModel).options(selectinload(YouthActionPlanModel.communications)).order_by(
         YouthActionPlanModel.academic_year.desc())
     return (await db.execute(query)).scalars().all()
@@ -150,8 +174,11 @@ async def submit_plan_to_pp(
         plan_id: uuid.UUID,
         pp_email: str = Query(..., description="The official email of the Parish Priest"),
         db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(require_update_access)  # YC Level
+        current_user: User = Depends(get_current_user)  # YC Level
 ):
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("youth:write")(current_user)
+
     plan = (
         await db.execute(select(YouthActionPlanModel).where(YouthActionPlanModel.id == plan_id))).scalar_one_or_none()
     if not plan: raise HTTPException(status_code=404, detail="Plan not found.")
@@ -169,8 +196,11 @@ async def pp_review_plan(
         approved: bool,
         feedback: str,
         db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(require_parish_priest)  # MUST be Boss
+        current_user: User = Depends(get_current_user)  # MUST be Boss
 ):
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("parish:approve")(current_user)
+
     plan = (
         await db.execute(select(YouthActionPlanModel).where(YouthActionPlanModel.id == plan_id))).scalar_one_or_none()
     if not plan or plan.status != "PENDING_PP": raise HTTPException(status_code=400,
@@ -190,8 +220,11 @@ async def submit_plan_to_dyc(
         plan_id: uuid.UUID,
         dyc_email: str = Query(..., description="The official email of the Deanery Youth Chaplain"),
         db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(require_update_access)
+        current_user: User = Depends(get_current_user)
 ):
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("youth:write")(current_user)
+
     plan = (
         await db.execute(select(YouthActionPlanModel).where(YouthActionPlanModel.id == plan_id))).scalar_one_or_none()
     if not plan or plan.status != "APPROVED_PP": raise HTTPException(status_code=400,
@@ -210,8 +243,11 @@ async def dyc_review_plan(
         approved: bool,
         feedback: str,
         db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(require_update_access)  # DYC Level
+        current_user: User = Depends(get_current_user)  # DYC Level
 ):
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("youth:write")(current_user)
+
     plan = (
         await db.execute(select(YouthActionPlanModel).where(YouthActionPlanModel.id == plan_id))).scalar_one_or_none()
     if not plan or plan.status != "PENDING_DYC": raise HTTPException(status_code=400,
@@ -229,8 +265,11 @@ async def submit_plan_to_dean(
         plan_id: uuid.UUID,
         dean_email: str = Query(..., description="The official email of the Dean"),
         db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(require_update_access)  # DYC forwards to Dean
+        current_user: User = Depends(get_current_user)  # DYC forwards to Dean
 ):
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("youth:write")(current_user)
+
     plan = (
         await db.execute(select(YouthActionPlanModel).where(YouthActionPlanModel.id == plan_id))).scalar_one_or_none()
     if not plan or plan.status != "APPROVED_DYC": raise HTTPException(status_code=400,
@@ -250,9 +289,12 @@ async def submit_plan_to_dean(
 async def generate_plan_pdf(
         plan_id: uuid.UUID,
         db: AsyncSession = Depends(get_db),
-        _current_user: User = Depends(require_read_access)
+        current_user: User = Depends(get_current_user)
 ):
     """Generates a formatted PDF of the Action Plan for physical filing."""
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("youth:read")(current_user)
+
     plan = (
         await db.execute(select(YouthActionPlanModel).where(YouthActionPlanModel.id == plan_id))).scalar_one_or_none()
     if not plan: raise HTTPException(status_code=404, detail="Plan not found.")

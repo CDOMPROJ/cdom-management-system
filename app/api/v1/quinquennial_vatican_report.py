@@ -3,20 +3,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Dict, Any
 
-from app.core.dependencies import get_db, require_bishop_access
+# PHASE 3 SECURE IMPORTS (replacing old dependencies)
+from app.core.security import get_current_user
+from app.core.authorization import PermissionChecker
+from app.db.session import get_db
 from app.models.all_models import User, GlobalRegistryIndex
 
 router = APIRouter()
 
+
 @router.get("/quinquennial-summary", response_model=Dict[str, Any])
 async def get_global_vatican_report(
         db: AsyncSession = Depends(get_db),
-        _bishop: User = Depends(require_bishop_access) # Security: Bishop/SysAdmin only
+        current_user: User = Depends(get_current_user)  # PHASE 3: Full User object with ownership/ABAC
 ):
     """
     Aggregates all Sacraments across all parishes for the 5-Year Vatican Report.
     Operates at lightning speed by querying the unified Global Index.
     """
+    # PHASE 3 ABAC ENFORCEMENT (Bishop-only)
+    await PermissionChecker("bishop:report")(current_user)
+
     # 1. Base query against the Index
     base_query = select(GlobalRegistryIndex.record_type, func.count(GlobalRegistryIndex.id)).group_by(GlobalRegistryIndex.record_type)
     results = (await db.execute(base_query)).all()

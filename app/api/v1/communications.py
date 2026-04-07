@@ -2,12 +2,16 @@ from fastapi import APIRouter, Depends, status, HTTPException, BackgroundTasks
 from pydantic import BaseModel, EmailStr
 import os
 
-# Secure internal imports
-from app.core.dependencies import require_read_access
-from app.core.email import send_system_email
+# PHASE 3 SECURE IMPORTS (replacing old dependencies)
+from app.core.security import get_current_user
+from app.core.authorization import PermissionChecker, OwnershipService
+from app.db.session import get_db
 from app.models.all_models import User
+from app.core.email import send_system_email
 
 router = APIRouter()
+
+ownership_service = OwnershipService()
 
 # Schema for incoming email requests
 class EmailRequest(BaseModel):
@@ -23,12 +27,15 @@ class EmailRequest(BaseModel):
 async def dispatch_email(
         email_in: EmailRequest,
         background_tasks: BackgroundTasks, # <-- Inject the Background Worker
-        _current_user: User = Depends(require_read_access) # Ensure strict User object
+        current_user: User = Depends(get_current_user) # PHASE 3: Full User object with ownership/ABAC
 ):
     """
     Dispatches an official system email via the Resend API.
     Offloads the HTTP request to a Background Task to prevent UI latency.
     """
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("communications:send")(current_user)
+
     pdf_path = None
 
     # Generate a temporary dummy PDF synchronously if requested

@@ -1,11 +1,18 @@
+# ==============================================================================
+# app/api/v1/approvals.py
+# FULL SUPERSET OF THE ORIGINAL RICH LOGIC + PHASE 3 OWNERSHIP/ABAC ENFORCEMENT
+# ==============================================================================
+
 from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import uuid
 from datetime import date  # <--- ADDED: Required for JSON-to-Date parsing
 
-# Security & Core
-from app.core.dependencies import get_db, require_parish_priest
+# PHASE 3 SECURE IMPORTS (replacing old dependencies)
+from app.core.security import get_current_user
+from app.core.authorization import PermissionChecker, OwnershipService
+from app.db.session import get_db
 from app.models.all_models import (
     PendingActionModel,
     BaptismModel,
@@ -18,6 +25,8 @@ from app.models.all_models import (
 )
 
 router = APIRouter()
+
+ownership_service = OwnershipService()
 
 # ==============================================================================
 # DYNAMIC TABLE MAPPING
@@ -38,9 +47,12 @@ TABLE_MAP = {
 @router.get("/pending", status_code=status.HTTP_200_OK)
 async def get_pending_actions(
         db: AsyncSession = Depends(get_db),
-        _current_pp: User = Depends(require_parish_priest)  # SECURITY: Object-based access
+        current_user: User = Depends(get_current_user)  # SECURITY: Object-based access
 ):
     """Fetches all actions awaiting the Parish Priest's approval."""
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("parish:approve")(current_user)
+
     query = select(PendingActionModel).where(PendingActionModel.status == "PENDING").order_by(
         PendingActionModel.created_at.desc())
     results = (await db.execute(query)).scalars().all()
@@ -58,9 +70,12 @@ async def get_pending_actions(
 async def approve_action(
         action_id: uuid.UUID,
         db: AsyncSession = Depends(get_db),
-        current_pp: User = Depends(require_parish_priest)
+        current_user: User = Depends(get_current_user)
 ):
     """Approves an edit, applies the payload, and permanently writes to the Audit Ledger."""
+
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("parish:approve")(current_user)
 
     # 1. Fetch the Pending Action
     action_query = await db.execute(select(PendingActionModel).where(PendingActionModel.id == action_id))
@@ -85,6 +100,9 @@ async def approve_action(
 
     if not target_record:
         raise HTTPException(status_code=404, detail="The canonical record could not be found.")
+
+    # PHASE 3 OBJECT-LEVEL OWNERSHIP CHECK
+    await ownership_service.check_ownership(target_record, current_user)
 
     # 4. CAPTURE THE "BEFORE" STATE FOR THE AUDIT LOG
     old_values = {}
@@ -115,7 +133,7 @@ async def approve_action(
         action_type=action.action_type,
         target_table=action.target_table,
         target_record_id=str(target_record.id),
-        changed_by_email=current_pp.email,  # Type-safe object access
+        changed_by_email=current_user.email,  # Type-safe object access
         old_values=old_values,
         new_values=action.proposed_payload
     )
@@ -139,9 +157,12 @@ async def approve_action(
 async def reject_action(
         action_id: uuid.UUID,
         db: AsyncSession = Depends(get_db),
-        _current_pp: User = Depends(require_parish_priest)
+        current_user: User = Depends(get_current_user)
 ):
     """Rejects an edit. The canonical record remains untouched."""
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("parish:approve")(current_user)
+
     action_query = await db.execute(select(PendingActionModel).where(PendingActionModel.id == action_id))
     action = action_query.scalar_one_or_none()
 

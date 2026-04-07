@@ -11,11 +11,15 @@ from reportlab.lib.units import cm
 from reportlab.lib import colors
 import uuid
 
-# Secure internal imports
-from app.core.dependencies import get_db, require_read_access
+# PHASE 3 SECURE IMPORTS (replacing old dependencies)
+from app.core.security import get_current_user
+from app.core.authorization import PermissionChecker, OwnershipService
+from app.db.session import get_db
 from app.models.all_models import BaptismModel, MarriageModel, ParishModel, User
 
 router = APIRouter()
+
+ownership_service = OwnershipService()
 
 
 # ==============================================================================
@@ -63,18 +67,24 @@ def draw_certificate_template(p: canvas.Canvas, width: float, height: float, tit
 async def generate_baptism_certificate(
         record_id: uuid.UUID,
         db: AsyncSession = Depends(get_db),
-        _current_user: User = Depends(require_read_access)
+        current_user: User = Depends(get_current_user)
 ):
     """Generates an official, print-ready Certificate of Baptism with QR verification."""
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("parish:read")(current_user)
+
     query = select(BaptismModel).where(BaptismModel.id == record_id)
     record = (await db.execute(query)).scalar_one_or_none()
 
     if not record:
         raise HTTPException(status_code=404, detail="Baptism record not found.")
 
+    # PHASE 3 OBJECT-LEVEL OWNERSHIP CHECK
+    await ownership_service.check_ownership(record, current_user)
+
     parish_name = "Parish Registry"
-    if _current_user.parish_id:
-        p_query = select(ParishModel.name).where(ParishModel.id == _current_user.parish_id)
+    if current_user.parish_id:
+        p_query = select(ParishModel.name).where(ParishModel.id == current_user.parish_id)
         parish_name = (await db.execute(p_query)).scalar_one_or_none() or "Parish Registry"
 
     verify_url = f"https://verify.domansa.org/check/baptism/{record.id}"

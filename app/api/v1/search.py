@@ -3,19 +3,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from rapidfuzz import process
 
-from app.core.dependencies import get_db, require_read_access
+
+from app.core.security import get_current_user
+from app.core.authorization import PermissionChecker, OwnershipService
+from app.db.session import get_db
 from app.models.all_models import GlobalRegistryIndex, ParishModel, User
 from app.schemas.schemas import SearchResponse, GlobalSearchResult
 
 router = APIRouter()
 
+ownership_service = OwnershipService()
+
+
 @router.get("/", response_model=SearchResponse)
 async def global_search(
         q: str = Query(..., min_length=2, description="Search by Name or Canonical Number"),
         db: AsyncSession = Depends(get_db),
-        _current_user: User = Depends(require_read_access) # FIXED
+        current_user: User = Depends(get_current_user) # FIXED
 ):
     """Queries the public Global Registry Index using RapidFuzz for typo-tolerance."""
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("search:global")(current_user)
+
     query = select(GlobalRegistryIndex, ParishModel.name.label("parish_name")).join(
         ParishModel, GlobalRegistryIndex.parish_id == ParishModel.id
     )

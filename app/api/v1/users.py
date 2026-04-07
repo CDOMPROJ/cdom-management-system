@@ -4,9 +4,10 @@ from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
 import secrets
 
-# Core dependencies and security utilities
-from app.core.dependencies import get_db, require_sysadmin_access
-from app.core.security import get_password_hash
+# PHASE 3 SECURE IMPORTS (replacing old dependencies)
+from app.core.security import get_current_user, get_password_hash
+from app.core.authorization import PermissionChecker, OwnershipService
+from app.db.session import get_db
 from app.core.email import send_invitation_email
 
 # Database Models and Pydantic Schemas
@@ -14,6 +15,8 @@ from app.models.all_models import User, UserInvitationModel
 from app.schemas.schemas import UserInviteRequest, UserSetupRequest, DirectUserCreateRequest
 
 router = APIRouter()
+
+ownership_service = OwnershipService()
 
 # ==============================================================================
 # 1. SYSADMIN: INVITE NEW USER (ZERO TRUST PROVISIONING)
@@ -23,12 +26,15 @@ async def invite_user(
     request: UserInviteRequest,
     background_tasks: BackgroundTasks, # <-- Inject the Background Worker
     db: AsyncSession = Depends(get_db),
-    _sysadmin: User = Depends(require_sysadmin_access) # SECURITY: Strict User object
+    current_user: User = Depends(get_current_user) # PHASE 3: Full User object with ownership/ABAC
 ):
     """
     SysAdmin provisions an account slot.
     Generates a secure token and queues an email via Resend in the background.
     """
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("sysadmin:write")(current_user)
+
     # 1. Check if user already exists
     query = select(User).where(User.email == request.email)
     existing_user = (await db.execute(query)).scalar_one_or_none()
@@ -69,12 +75,15 @@ async def invite_user(
 async def delete_user(
     email: str,
     db: AsyncSession = Depends(get_db),
-    _sysadmin: User = Depends(require_sysadmin_access) # SECURITY: Strict User object
+    current_user: User = Depends(get_current_user) # PHASE 3: Full User object with ownership/ABAC
 ):
     """
     SysAdmin evicts a user from an office account.
     Soft-deletes the record so the @domansa.org email can be re-provisioned.
     """
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("sysadmin:write")(current_user)
+
     if email == "sysadmin@domansa.org":
         raise HTTPException(status_code=400, detail="Cannot disable the master SysAdmin account.")
 
@@ -99,12 +108,15 @@ async def delete_user(
 async def create_user_directly(
         request: DirectUserCreateRequest,
         db: AsyncSession = Depends(get_db),
-        _sysadmin: User = Depends(require_sysadmin_access)  # SECURITY: Must be SysAdmin
+        current_user: User = Depends(get_current_user)  # PHASE 3: Full User object with ownership/ABAC
 ):
     """
     Directly creates an active user without the email invitation flow.
     Perfect for initial system provisioning or local development.
     """
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("sysadmin:write")(current_user)
+
     # Check if user exists
     query = select(User).where(User.email == request.email)
     existing_user = (await db.execute(query)).scalar_one_or_none()

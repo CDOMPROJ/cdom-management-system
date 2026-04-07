@@ -1,3 +1,8 @@
+# ==============================================================================
+# app/api/v1/analytics.py
+# FULL SUPERSET OF THE ORIGINAL RICH LOGIC + PHASE 3 OWNERSHIP/ABAC ENFORCEMENT
+# ==============================================================================
+
 from fastapi import APIRouter, Depends, status, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,11 +14,15 @@ import io
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-# Secure internal imports
-from app.core.dependencies import get_db, require_sysadmin_access, require_read_access
+# PHASE 3 SECURE IMPORTS (replacing old dependencies)
+from app.core.security import get_current_user
+from app.core.authorization import PermissionChecker, OwnershipService
+from app.db.session import get_db
 from app.models.all_models import ParishModel, DiocesanAnalyticsModel, GlobalRegistryIndex, User
 
 router = APIRouter()
+
+ownership_service = OwnershipService()
 
 
 # ==============================================================================
@@ -54,9 +63,12 @@ async def sync_entire_diocese(
         background_tasks: BackgroundTasks,
         reporting_year: int = datetime.now(timezone.utc).year,
         db: AsyncSession = Depends(get_db),
-        _admin: User = Depends(require_sysadmin_access)
+        current_user: User = Depends(get_current_user)
 ):
     """Triggers a massive recalculation of all 32 parishes in the background."""
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("sysadmin:write")(current_user)
+
     parishes = (await db.execute(select(ParishModel.id))).scalars().all()
     if not parishes: raise HTTPException(status_code=400, detail="No parishes registered.")
 
@@ -74,9 +86,12 @@ async def sync_entire_diocese(
 @router.get("/forecast/pdf")
 async def generate_ml_forecast_pdf(
         db: AsyncSession = Depends(get_db),
-        _user: User = Depends(require_read_access)  # Bishop/SysAdmin
+        current_user: User = Depends(get_current_user)
 ):
     """Uses Scikit-Learn to predict 5-year sacramental demand."""
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("bishop:read")(current_user)
+
     # Dummy historical data simulation (Replace with actual queries across past 5 years)
     years = np.array([2021, 2022, 2023, 2024, 2025]).reshape(-1, 1)
     # Simulated total diocesan baptisms for CDOM

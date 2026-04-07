@@ -3,18 +3,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List
 
-# Secure internal imports
-from app.core.dependencies import get_db, require_sysadmin_access, require_read_access, get_current_active_user
+# PHASE 3 SECURE IMPORTS (replacing old dependencies)
+from app.core.security import get_current_user
+from app.core.authorization import PermissionChecker, OwnershipService
+from app.db.session import get_db
 from app.models.all_models import DeaneryModel, ParishModel, DiocesanAnalyticsModel, User
 from app.schemas.schemas import DeaneryCreate, DeaneryResponse, ParishCreate, ParishResponse
 
 router = APIRouter()
 
+ownership_service = OwnershipService()
+
 
 # ==============================================================================
 # HELPER: DEANERY SECURITY & AUTHENTICATION
 # ==============================================================================
-def verify_deanery_role(current_user: User = Depends(get_current_active_user)):
+def verify_deanery_role(current_user: User = Depends(get_current_user)):
     """Ensures only a Dean, Bishop, or SysAdmin can view specific deanery analytics."""
     allowed_roles = ["Dean", "Bishop", "SysAdmin"]
 
@@ -35,9 +39,12 @@ def verify_deanery_role(current_user: User = Depends(get_current_active_user)):
 async def create_deanery(
         payload: DeaneryCreate,
         db: AsyncSession = Depends(get_db),
-        _admin: User = Depends(require_sysadmin_access)  # SECURITY: Only SysAdmins/Bishop
+        current_user: User = Depends(get_current_user)  # SECURITY: Only SysAdmins/Bishop
 ):
     """Registers a new Deanery region in the Diocese."""
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("sysadmin:write")(current_user)
+
     query = select(DeaneryModel).where(DeaneryModel.name == payload.name)
     existing = (await db.execute(query)).scalar_one_or_none()
 
@@ -55,9 +62,12 @@ async def create_deanery(
 @router.get("/", response_model=List[DeaneryResponse])
 async def get_all_deaneries(
         db: AsyncSession = Depends(get_db),
-        _current_user: User = Depends(require_read_access)
+        current_user: User = Depends(get_current_user)
 ):
     """Fetches a list of all Deaneries in the Diocese."""
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("deanery:read")(current_user)
+
     query = select(DeaneryModel).order_by(DeaneryModel.name)
     result = await db.execute(query)
     return result.scalars().all()
@@ -71,12 +81,15 @@ async def register_parish(
         deanery_id: int,
         payload: ParishCreate,
         db: AsyncSession = Depends(get_db),
-        _admin: User = Depends(require_sysadmin_access)
+        current_user: User = Depends(get_current_user)
 ):
     """
     Registers a new Parish and assigns it to a Deanery.
     Establishes the internal 'schema_name' used for tenant data isolation.
     """
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("sysadmin:write")(current_user)
+
     deanery_query = select(DeaneryModel).where(DeaneryModel.id == deanery_id)
     if not (await db.execute(deanery_query)).scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Deanery not found.")
@@ -104,13 +117,16 @@ async def register_parish(
 async def get_deanery_overview(
         deanery_id: int,
         db: AsyncSession = Depends(get_db),
-        admin_user: User = Depends(verify_deanery_role)
+        current_user: User = Depends(verify_deanery_role)
 ):
     """Returns the aggregated Sacramental and Financial totals for a specific Deanery."""
 
     # Security Check: A Dean can only view his OWN deanery. The Bishop/SysAdmin bypasses this.
-    if admin_user.role == "Dean" and admin_user.deanery_id != deanery_id:
+    if current_user.role == "Dean" and current_user.deanery_id != deanery_id:
         raise HTTPException(status_code=403, detail="You do not have jurisdiction over this Deanery.")
+
+    # PHASE 3 OBJECT-LEVEL OWNERSHIP CHECK
+    await ownership_service.check_ownership_for_deanery(deanery_id, current_user)
 
     query = (
         select(
@@ -153,12 +169,15 @@ async def get_deanery_overview(
 async def get_deanery_parishes_analytics(
         deanery_id: int,
         db: AsyncSession = Depends(get_db),
-        admin_user: User = Depends(verify_deanery_role)
+        current_user: User = Depends(verify_deanery_role)
 ):
     """Returns the individual analytics rows for parishes strictly within this Deanery."""
 
-    if admin_user.role == "Dean" and admin_user.deanery_id != deanery_id:
+    if current_user.role == "Dean" and current_user.deanery_id != deanery_id:
         raise HTTPException(status_code=403, detail="Unauthorized. You do not have jurisdiction over this Deanery.")
+
+    # PHASE 3 OBJECT-LEVEL OWNERSHIP CHECK
+    await ownership_service.check_ownership_for_deanery(deanery_id, current_user)
 
     query = (
         select(DiocesanAnalyticsModel)
