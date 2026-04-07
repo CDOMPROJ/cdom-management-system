@@ -92,7 +92,7 @@ router.dependencies = [Depends(rate_limiter)]
 from .auth import router as auth_router
 from .baptisms import router as baptisms_router
 from .marriages import router as marriage_router
-from .confirmations import router as confirmation_router
+from .confirmation import router as confirmation_router
 from .first_communions import router as first_communion_router
 from .death_register import router as death_register_router
 from .finances import router as finances_router

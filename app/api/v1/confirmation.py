@@ -1,5 +1,5 @@
 # ==============================================================================
-# app/api/v1/first_communion.py
+# app/api/v1/confirmation.py
 # FULL SUPERSET OF THE ORIGINAL RICH LOGIC + PHASE 3 OWNERSHIP/ABAC ENFORCEMENT
 # ==============================================================================
 
@@ -11,12 +11,11 @@ from rapidfuzz import process
 import uuid
 from typing import Any, Dict
 
-from app.core.dependencies import process_modification_request
 from app.core.security import get_current_user
 from app.core.authorization import PermissionChecker, OwnershipService
 from app.db.session import get_db
-from app.models.all_models import FirstCommunionModel, GlobalRegistryIndex, User
-from app.schemas.schemas import FirstCommunionCreate
+from app.models.all_models import ConfirmationModel, GlobalRegistryIndex, User
+from app.schemas.schemas import ConfirmationCreate
 
 router = APIRouter()
 
@@ -24,42 +23,42 @@ ownership_service = OwnershipService()
 
 
 # ==============================================================================
-# 1. REGISTER FIRST COMMUNION (CANONICAL DATA ENTRY)
+# 1. REGISTER CONFIRMATION (CANONICAL DATA ENTRY)
 # ==============================================================================
 @router.get("/", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
-async def get_recent_communions(
+async def get_recent_confirmations(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     await PermissionChecker("parish:read")(current_user)
-    query = select(FirstCommunionModel).order_by(desc(FirstCommunionModel.communion_date)).offset(offset).limit(limit)
+    query = select(ConfirmationModel).order_by(desc(ConfirmationModel.confirmation_date)).offset(offset).limit(limit)
     result = await db.execute(query)
     records = result.scalars().all()
     return {"count": len(records), "results": records}
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def register_first_communion(
-    communion_in: FirstCommunionCreate,
+async def register_confirmation(
+    confirmation_in: ConfirmationCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     await PermissionChecker("parish:write")(current_user)
-    await ownership_service.check_ownership(communion_in, current_user)
+    await ownership_service.check_ownership(confirmation_in, current_user)
 
-    current_year = communion_in.communion_date.year
+    current_year = confirmation_in.confirmation_date.year
     query = await db.execute(
-        select(func.max(FirstCommunionModel.row_number)).where(FirstCommunionModel.registry_year == current_year)
+        select(func.max(ConfirmationModel.row_number)).where(ConfirmationModel.registry_year == current_year)
     )
     max_row = query.scalar() or 0
     new_row = max_row + 1
     canonical_number = f"{new_row}/{current_year}"
 
     try:
-        new_comm = FirstCommunionModel(
-            **communion_in.model_dump(),
+        new_conf = ConfirmationModel(
+            **confirmation_in.model_dump(),
             row_number=new_row,
             registry_year=current_year,
             formatted_number=canonical_number,
@@ -67,14 +66,14 @@ async def register_first_communion(
             owner_deanery_id=current_user.deanery_id,
             owner_user_id=current_user.id
         )
-        db.add(new_comm)
+        db.add(new_conf)
         await db.flush()
 
         global_entry = GlobalRegistryIndex(
-            first_name=communion_in.first_name,
-            last_name=communion_in.last_name,
+            first_name=confirmation_in.first_name,
+            last_name=confirmation_in.last_name,
             canonical_number=canonical_number,
-            record_type="FIRST_COMMUNION",
+            record_type="CONFIRMATION",
             parish_id=current_user.parish_id,
             owner_parish_id=current_user.parish_id,
             owner_deanery_id=current_user.deanery_id,
@@ -84,9 +83,9 @@ async def register_first_communion(
         await db.commit()
 
         return {
-            "message": "First Communion registered successfully.",
+            "message": "Confirmation registered successfully.",
             "canonical_reference": canonical_number,
-            "id": str(new_comm.id)
+            "id": str(new_conf.id)
         }
     except Exception as e:
         await db.rollback()
@@ -97,13 +96,13 @@ async def register_first_communion(
 # 2. LOCAL SEARCH (TYPO-TOLERANT FUZZY SEARCH)
 # ==============================================================================
 @router.get("/search")
-async def search_communions(
+async def search_confirmations(
     q: str = Query(..., min_length=2),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     await PermissionChecker("parish:read")(current_user)
-    result = await db.execute(select(FirstCommunionModel))
+    result = await db.execute(select(ConfirmationModel))
     rows = result.scalars().all()
     if not rows:
         return {"results": [], "message": "No records found."}
@@ -116,28 +115,28 @@ async def search_communions(
 
 
 # ==============================================================================
-# 3. UPDATE FIRST COMMUNION (GOVERNANCE WORKFLOW)
+# 3. UPDATE CONFIRMATION (GOVERNANCE WORKFLOW)
 # ==============================================================================
-@router.put("/{communion_id}", status_code=status.HTTP_200_OK)
-async def update_first_communion(
-    communion_id: uuid.UUID,
-    payload: FirstCommunionCreate,
+@router.put("/{confirmation_id}", status_code=status.HTTP_200_OK)
+async def update_confirmation(
+    confirmation_id: uuid.UUID,
+    payload: ConfirmationCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     await PermissionChecker("parish:write")(current_user)
 
-    query = select(FirstCommunionModel).where(FirstCommunionModel.id == communion_id)
+    query = select(ConfirmationModel).where(ConfirmationModel.id == confirmation_id)
     existing_record = (await db.execute(query)).scalar_one_or_none()
     if not existing_record:
-        raise HTTPException(status_code=404, detail="First Communion record not found.")
+        raise HTTPException(status_code=404, detail="Confirmation record not found.")
 
     await ownership_service.check_ownership(existing_record, current_user)
 
     if current_user.office.value != "Parish Priest":
         await process_modification_request(
             db=db, user=current_user, action_type="UPDATE",
-            table_name="first_communions", record_id=str(communion_id),
+            table_name="confirmations", record_id=str(confirmation_id),
             payload=payload.model_dump(mode='json')
         )
         return JSONResponse(status_code=202, content={"message": "Modification queued. Awaiting Parish Priest approval."})
@@ -147,4 +146,4 @@ async def update_first_communion(
         setattr(existing_record, key, value)
     await db.commit()
 
-    return {"message": "First Communion record updated successfully."}
+    return {"message": "Confirmation record updated successfully."}

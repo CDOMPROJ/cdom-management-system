@@ -1,3 +1,8 @@
+# ==============================================================================
+# app/api/v1/baptisms.py
+# FULL SUPERSET OF THE ORIGINAL RICH LOGIC + PHASE 3 OWNERSHIP/ABAC ENFORCEMENT
+# ==============================================================================
+
 from fastapi import APIRouter, Depends, status, Query, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,18 +11,20 @@ from rapidfuzz import process
 import uuid
 from typing import Any, Dict
 
-# Secure internal imports
-from app.core.dependencies import (
-    get_db,
-    require_create_access,
-    require_read_access,
-    require_update_access,
-    process_modification_request
-)
+from app.core.dependencies import process_modification_request
+# ==============================================================================
+# PHASE 3 SECURE IMPORTS (consolidated – no old dependencies folder)
+# ==============================================================================
+from app.core.security import get_current_user
+from app.core.authorization import PermissionChecker, OwnershipService
+from app.db.session import get_db
 from app.models.all_models import BaptismModel, GlobalRegistryIndex, User
 from app.schemas.schemas import BaptismCreate
 
 router = APIRouter()
+
+# Phase 3 Ownership Service (used for object-level checks)
+ownership_service = OwnershipService()
 
 
 # ==============================================================================
@@ -28,23 +35,32 @@ router = APIRouter()
 async def get_recent_baptisms(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("parish:read")(current_user)
+
     query = select(BaptismModel).order_by(desc(BaptismModel.date_of_baptism)).offset(offset).limit(limit)
     result = await db.execute(query)
     records = result.scalars().all()
     return {"count": len(records), "results": records}
 
+
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def register_baptism(
         baptism_in: BaptismCreate,
         db: AsyncSession = Depends(get_db),
-        _current_user: User = Depends(require_create_access)  # SECURITY: Must have create privileges
+        current_user: User = Depends(get_current_user)
 ):
     """
     Creates a canonical baptism record.
     Generates a sequential tracking number and dual-writes to the Local Parish and Global Diocesan Index.
     """
+    # PHASE 3 ABAC + OWNERSHIP ENFORCEMENT
+    await PermissionChecker("parish:write")(current_user)
+    await ownership_service.check_ownership(baptism_in, current_user)
+
     current_year = baptism_in.date_of_baptism.year
 
     # 1. Generate Sequential Canonical Number (e.g., 1/2026)
@@ -63,7 +79,11 @@ async def register_baptism(
             **baptism_in.model_dump(),
             row_number=new_row,
             registry_year=current_year,
-            formatted_number=canonical_number
+            formatted_number=canonical_number,
+            # PHASE 3 OWNERSHIP COLUMNS (added – old logic untouched)
+            owner_parish_id=current_user.parish_id,
+            owner_deanery_id=current_user.deanery_id,
+            owner_user_id=current_user.id
         )
         db.add(new_bap)
         await db.flush()  # Flush locks the row and generates the UUID without committing the transaction yet
@@ -80,7 +100,11 @@ async def register_baptism(
             canonical_number=canonical_number,
             baptism_number=canonical_number,
             record_type="BAPTISM",
-            parish_id=_current_user.parish_id  # Identity mathematically guaranteed by the JWT
+            parish_id=current_user.parish_id,  # Identity mathematically guaranteed by the JWT
+            # PHASE 3 OWNERSHIP COLUMNS (added – old logic untouched)
+            owner_parish_id=current_user.parish_id,
+            owner_deanery_id=current_user.deanery_id,
+            owner_user_id=current_user.id
         )
         db.add(global_entry)
 
@@ -108,12 +132,15 @@ async def register_baptism(
 async def search_baptisms(
         q: str = Query(..., min_length=2, description="Search by Name or Canonical Number"),
         db: AsyncSession = Depends(get_db),
-        _current_user: User = Depends(require_read_access)
+        current_user: User = Depends(get_current_user)
 ):
     """
     Performs an intelligent, fuzzy search within the baptismal registry.
     Handles spelling mistakes (e.g., finding "Mwaba" even if the user typed "Mwamba").
     """
+    # PHASE 3 ABAC ENFORCEMENT
+    await PermissionChecker("parish:read")(current_user)
+
     # Fetch all records to perform fuzzy matching in memory
     result = await db.execute(select(BaptismModel))
     rows = result.scalars().all()
@@ -148,7 +175,7 @@ async def update_baptism(
         baptism_id: uuid.UUID,
         payload: BaptismCreate,
         db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(require_update_access)
+        current_user: User = Depends(get_current_user)
 ):
     """
     Modifies an existing record.
@@ -156,6 +183,9 @@ async def update_baptism(
     - Assistant Priests/Secretaries: Queued for approval (Returns 202).
     - Parish Priests: Executes immediately (Returns 200).
     """
+    # PHASE 3 ABAC + OWNERSHIP ENFORCEMENT
+    await PermissionChecker("parish:write")(current_user)
+
     # 1. Verify the target record actually exists
     query = select(BaptismModel).where(BaptismModel.id == baptism_id)
     existing_record = (await db.execute(query)).scalar_one_or_none()
@@ -163,9 +193,12 @@ async def update_baptism(
     if not existing_record:
         raise HTTPException(status_code=404, detail="Baptism record not found.")
 
+    # PHASE 3 OBJECT-LEVEL OWNERSHIP CHECK
+    await ownership_service.check_ownership(existing_record, current_user)
+
     # 2. EXPLICIT SECURITY GATE: The Governance Queue
     # If the user is NOT a Parish Priest, they cannot modify the database directly.
-    if current_user.role != "Parish Priest":
+    if current_user.office.value != "Parish Priest":
         # Save the proposed changes to the Pending Actions Queue as a JSON payload
         await process_modification_request(
             db=db,
