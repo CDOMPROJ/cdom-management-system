@@ -199,3 +199,74 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+def decode_access_token(token: str):
+    """Decode JWT token - used by auth router."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        return payload
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+# ==============================================================================
+# AuthMiddleware - JWT + Revoked Token Validation (ADDED FOR MAIN.PY)
+# ==============================================================================
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from fastapi import status
+from app.models.all_models import RevokedTokenModel
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Skip auth for health check and docs
+        if request.url.path in ["/health", "/docs", "/redoc", "/openapi.json", "/api/v1/auth/login"]:
+            return await call_next(request)
+
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Not authenticated"}
+            )
+
+        token = auth_header.split(" ")[1]
+
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+
+            if not jti or not exp:
+                raise JWTError("Invalid token")
+
+            # Check if token is revoked
+            async for db in get_db():
+                result = await db.execute(
+                    select(RevokedTokenModel).where(RevokedTokenModel.jti == jti)
+                )
+                revoked = result.scalar_one_or_none()
+
+                if revoked and revoked.expires_at > datetime.now(timezone.utc):
+                    return JSONResponse(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        content={"detail": "Token has been revoked"}
+                    )
+                break
+
+        except JWTError:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Invalid or expired token"}
+            )
+
+        # Token is valid → continue
+        response = await call_next(request)
+        return response

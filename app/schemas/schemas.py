@@ -1,8 +1,7 @@
-# ==========================================
-# CDOM Pastoral Management System – Schemas
-# FINAL MERGED & OPTIMIZED VERSION
-# Single source of truth for all FastAPI endpoints
-# ==========================================
+# ==============================================================================
+# app/schemas/schemas.py
+# FINAL COMPLETE MERGED VERSION – SINGLE SOURCE OF TRUTH FOR PRODUCTION
+# ==============================================================================
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
 from typing import Optional, List, Generic, TypeVar, Dict, Any
@@ -86,7 +85,7 @@ class ParishResponse(ParishBase):
 
 
 # ==============================================================================
-# 1. AUTHENTICATION SCHEMAS – OPTIMIZED & GROUPED
+# 1. AUTHENTICATION SCHEMAS
 # ==============================================================================
 class Token(BaseModel):
     access_token: str
@@ -118,12 +117,37 @@ class MFAVerifyRequest(BaseModel):
     temp_token: Optional[str] = None
     code: str
 
+class PasswordChangeRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(..., min_length=16)
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
 class UserInviteRequest(BaseModel):
     email: EmailStr
     personal_email: EmailStr
     role: str
     parish_id: Optional[int] = None
     deanery_id: Optional[int] = None
+
+class DirectUserCreateRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=16)
+    role: str
+    office: Office
+    parish_id: Optional[int] = None
+    deanery_id: Optional[int] = None
+
+class SessionResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    mfa_required: bool = False
+    temp_token: Optional[str] = None
+
+class ElevatedTokenRequest(BaseModel):
+    reason: str
+    expires_in_minutes: int = 15
 
 class UserSetupRequest(BaseModel):
     token: str
@@ -166,14 +190,6 @@ class UserResponse(BaseModel):
     mfa_enabled: bool
     parish_id: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
-
-class DirectUserCreateRequest(BaseModel):
-    email: EmailStr
-    password: str = Field(..., min_length=16)
-    role: str
-    office: Office
-    parish_id: int | None = None
-    deanery_id: int | None = None
 
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
@@ -227,7 +243,7 @@ class PhoneVerificationCode(BaseModel):
 
 
 # ==============================================================================
-# 2. SACRAMENTAL REGISTERS (WITH ENHANCED PYDANTIC V2 VALIDATORS)
+# 2. SACRAMENTAL REGISTERS
 # ==============================================================================
 class BaptismBase(BaseModel):
     first_name: str
@@ -555,7 +571,7 @@ class YouthActionPlanResponse(YouthActionPlanBase):
 
 
 # ==============================================================================
-# 4. FINANCES & UMUTULO (STRICT NUMERIC GOVERNANCE)
+# 4. FINANCES & UMUTULO
 # ==============================================================================
 class FinanceBase(BaseModel):
     transaction_date: date

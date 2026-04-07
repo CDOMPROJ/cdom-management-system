@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from datetime import datetime, timedelta, timezone
 import pyotp
 import uuid
-import secrets
+from typing import List
+
 
 # PHASE 3 SECURE IMPORTS
 from app.core.security import get_current_user, get_password_hash, verify_password, create_access_token, decode_access_token
